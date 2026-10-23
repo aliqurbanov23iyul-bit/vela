@@ -1,5 +1,7 @@
 """One terminal, account and process. Read-only by construction; never calls order_send."""
 import os
+import argparse
+import json
 import time
 from datetime import datetime, timezone
 import MetaTrader5 as mt5
@@ -19,7 +21,7 @@ def run():
     if not origin.startswith("https://") and not origin.startswith("http://localhost:"):
         raise RuntimeError("HTTPS required")
     # Use an already logged-in dedicated terminal. Password never crosses this bridge.
-    if not mt5.initialize(path=path):
+    if not mt5.initialize(path):
         raise RuntimeError("Terminal initialization failed")
     try:
         while True:
@@ -29,6 +31,8 @@ def run():
                 raise RuntimeError("Terminal disconnected")
             if account.login != login or account.server != server:
                 raise RuntimeError("Account identity mismatch; refusing account switching")
+            if account.trade_mode != mt5.ACCOUNT_TRADE_MODE_DEMO:
+                raise RuntimeError("This initial connector only supports demo accounts")
             positions, orders = mt5.positions_get(), mt5.orders_get()
             if positions is None or orders is None:
                 raise RuntimeError("Broker snapshot incomplete")
@@ -48,4 +52,17 @@ def run():
         mt5.shutdown()
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', help='Private VELA connection JSON file')
+    args = parser.parse_args()
+    if args.config:
+        with open(args.config, encoding='utf-8-sig') as stream:
+            config = json.load(stream)
+        names = ('MT5_TERMINAL_PATH', 'MT5_LOGIN', 'MT5_SERVER', 'APP_ORIGIN',
+                 'MT5_ACCOUNT_ID', 'MT5_TENANT_ID', 'MT5_AGENT_TOKEN')
+        for name in names:
+            value = config.get(name)
+            if not isinstance(value, str) or not value:
+                raise RuntimeError('Invalid connection file')
+            os.environ[name] = value
     run()

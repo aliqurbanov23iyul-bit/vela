@@ -28,3 +28,5 @@ footer{display:flex;justify-content:space-between;gap:16px;margin-top:25px;color
 .workspace-copy{flex:1;min-width:0}.workspace-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.workspace .avatar{flex:0 0 32px}
 
 .telegram-state{padding:20px;border:1px solid var(--line);background:var(--bg);border-radius:14px;margin:22px 0}.telegram-state strong{display:block}.telegram-actions{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:22px}.telegram-summary{margin:28px 0}.telegram-summary .service{gap:15px;flex-wrap:wrap}
+
+.agent-connection{border:1px solid var(--line);border-radius:12px;padding:18px;margin:22px 0}.agent-connection summary{cursor:pointer;font-weight:600}.agent-connection select{width:100%;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--text)}
