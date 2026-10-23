@@ -43,7 +43,7 @@ test('embedded PostgreSQL: initial admin, migration rollback, MFA limits and run
   try{
     await t.test('all migrations apply atomically on an empty database',async()=>{
       assert.equal(await tx(()=>prepareInitialAdmin(client,data,()=>applyMigrations(client))),true);
-      assert.equal((await db.query('SELECT * FROM schema_migrations')).rows.length,10);
+      assert.equal((await db.query('SELECT * FROM schema_migrations')).rows.length,11);
       await tx(()=>applyMigrations(client)); // ledger makes reruns harmless
     });
     await t.test('five wrong codes persist and block a later correct code',async()=>{

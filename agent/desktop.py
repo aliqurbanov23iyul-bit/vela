@@ -18,7 +18,7 @@ CONFIG_PATH = ROOT / 'connection.dat'
 INSTALLED = ROOT / 'VELA.exe'
 FROZEN = bool(getattr(sys, 'frozen', False))
 NO_WINDOW = 0x08000000
-VERSION = '1.3.0'
+VERSION = '1.4.0'
 
 
 def record_status(event, error=None):
@@ -348,7 +348,7 @@ class Desktop:
     def refresh_demo(self):
         try:
             d=json.loads((ROOT/'demo-pilot-status.json').read_text(encoding='utf-8'))
-            self.demo_text.set(d['reason']+' · Cəhd: '+str(d['attempts'])+'/3 · Equity fərqi: '+str(d['equityChange']))
+            self.demo_text.set(d['reason']+' · Cəhd: '+str(d['attempts']) · Equity fərqi: '+str(d['equityChange']))
         except (OSError,ValueError,KeyError):pass
 
     def _start_tray(self):

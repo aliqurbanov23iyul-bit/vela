@@ -1,11 +1,13 @@
 import {NextResponse} from 'next/server';
 import {tenantTx} from '../../../../src/server/db';
-import {demoCandidate,demoClaim,prepareDemo,claimDemo} from '../../../../src/server/demo-control';
+import {demoCandidate,demoClaim,prepareDemo,claimDemo,demoOutcome,reportDemo,demoHalt,haltDemo} from '../../../../src/server/demo-control';
 import {telegram,proposalMessage,approvalKeyboard} from '../../../../src/server/telegram';
 export const maxDuration=30;
 export async function POST(req:Request){try{
  const raw=req.headers.get('authorization')?.replace(/^Bearer /,'');if(!raw)throw Error('AUTH');
  const text=await req.text();if(text.length>12000)throw Error('PAYLOAD');const input=JSON.parse(text);
+ if(input.operation==='report'){const b=demoOutcome.parse(input);return NextResponse.json(await tenantTx(b.tenantId,db=>reportDemo(db,b,raw)));}
+ if(input.operation==='halt'){const b=demoHalt.parse(input);return NextResponse.json(await tenantTx(b.tenantId,db=>haltDemo(db,b,raw)));}
  if(input.operation==='claim'){
   const b=demoClaim.parse(input);return NextResponse.json(await tenantTx(b.tenantId,db=>claimDemo(db,b,raw)));
  }
@@ -20,4 +22,4 @@ export async function POST(req:Request){try{
   }catch{/* A bounded leased retry on the next authenticated poll; never execute while pending. */}
  }
  const {notification,...safe}=result;return NextResponse.json(safe,{headers:{'Cache-Control':'no-store'}});
- }catch(e){const reason=e instanceof Error?e.message:'';return NextResponse.json({ok:false,state:['EXPIRED','STOPPED','LIMIT','APPROVAL_REQUIRED','STALE_SIGNAL','TELEGRAM'].includes(reason)?reason:'REJECTED'},{status:400});}}
+ }catch(e){const reason=e instanceof Error?e.message:'';return NextResponse.json({ok:false,state:['EXPIRED','STOPPED','LIMIT','APPROVAL_REQUIRED','STALE_SIGNAL','TELEGRAM','COUNT_PENDING','COOLDOWN','UNRESOLVED'].includes(reason)?reason:'REJECTED'},{status:400});}}

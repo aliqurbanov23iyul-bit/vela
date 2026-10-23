@@ -60,14 +60,14 @@ def run(stop_event=None, on_snapshot=None, demo_pilot=None):
                     except Exception:
                         pass
             if demo_pilot is not None:
-                payload['connectorVersion']='1.3.0'
-                payload['demoProtocol']=1
+                payload['connectorVersion']='1.4.0'
+                payload['demoProtocol']=2
                 payload['demoPilot']=dict(demo_pilot.status)
                 if time.monotonic()>=next_history:
                     from demo_bridge import collect_deals
                     next_history=time.monotonic()+60
                     try:
-                        payload['deals']=collect_deals(mt5,int(os.environ.get('MT5_BROKER_UTC_OFFSET_MINUTES','0')))
+                        payload['deals']=demo_pilot.collect_history()
                         history_status='READY'
                     except Exception:history_status='ERROR'
                 payload['historyStatus']=history_status

@@ -1,0 +1,11 @@
+ALTER TABLE demo_control ALTER COLUMN expires_at DROP NOT NULL;
+ALTER TABLE demo_control DROP CONSTRAINT IF EXISTS demo_control_check;
+ALTER TABLE demo_control ADD CONSTRAINT demo_control_duration CHECK(expires_at IS NULL OR (expires_at>started_at AND expires_at<=started_at+interval '24 hours'));
+ALTER TABLE demo_control ADD COLUMN duration_hours integer DEFAULT 2 CHECK(duration_hours BETWEEN 1 AND 24);
+ALTER TABLE demo_control ADD COLUMN trade_limit integer CHECK(trade_limit BETWEEN 1 AND 1000000);
+ALTER TABLE demo_control ADD COLUMN frequency text NOT NULL DEFAULT 'SIGNAL' CHECK(frequency IN('SIGNAL','HOURLY'));
+ALTER TABLE demo_control ADD COLUMN stop_reason text CHECK(stop_reason IN('MANUAL','TIME_LIMIT','COUNT_LIMIT','LOSS_LIMIT','UPGRADE'));
+ALTER TABLE demo_candidates ADD COLUMN execution_state text CHECK(execution_state IN('FILLED','REJECTED','UNKNOWN'));
+ALTER TABLE demo_candidates ADD COLUMN execution_result jsonb;
+ALTER TABLE demo_candidates ADD COLUMN reported_at timestamptz;
+CREATE INDEX demo_deals_session ON demo_deals(account_id,(payload->>'sessionId'),(payload->>'positionId'));

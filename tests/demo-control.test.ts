@@ -29,14 +29,14 @@ test('PostgreSQL website demo control, mode selection, Telegram grants and isola
   await db.query('INSERT INTO tenants(id,name) VALUES($1,\'Demo\'),($2,\'Other\')',[tenant,other]);
   await db.query('INSERT INTO users(id,username,password_hash) VALUES($1,\'demo-owner\',\'hash\')',[user]);
   await db.query("INSERT INTO memberships VALUES($1,$2,'OWNER')",[tenant,user]);
-  await db.query("INSERT INTO accounts(id,tenant_id,owner_id,label,account_type,broker_login,server,agent_token_hash,heartbeat,snapshot) VALUES($1,$2,$3,'Demo','DEMO','123','Demo',$4,now(),'{\"demoProtocol\":1}')",[account,tenant,user,digest(token)]);
+  await db.query("INSERT INTO accounts(id,tenant_id,owner_id,label,account_type,broker_login,server,agent_token_hash,heartbeat,snapshot) VALUES($1,$2,$3,'Demo','DEMO','123','Demo',$4,now(),'{\"demoProtocol\":2}')",[account,tenant,user,digest(token)]);
   await db.query("INSERT INTO market_latest(tenant_id,account_id,symbol,broker_symbol,quote_at,observed_at,summary) VALUES($1,$2,'EURUSD','EURUSD',now(),now(),'{\"dataIssues\":[]}')",[tenant,account]);
   await db.query("INSERT INTO market_analysis_runs(id,tenant_id,account_id,symbol,bar_at,status,result) VALUES($1,$2,$3,'EURUSD',$4,'COMPLETED',$5)",[randomUUID(),tenant,account,barAt,JSON.stringify({bias:'BUY',newsAssessment:{summary:'Official news'},expiresAt:new Date(Date.now()+180000).toISOString()})]);
   await t.test('only the account owner with a recent compatible demo connector can start',async()=>{
    await assert.rejects(tx(x=>controlDemo(x,randomUUID(),account,'start','AUTO')),/FORBIDDEN/);
    await db.query("UPDATE accounts SET account_type='REAL' WHERE id=$1",[account]);await assert.rejects(tx(x=>controlDemo(x,user,account,'start','AUTO')),/DEMO_ONLY/);
    await db.query("UPDATE accounts SET account_type='DEMO',snapshot='{}' WHERE id=$1",[account]);await assert.rejects(tx(x=>controlDemo(x,user,account,'start','AUTO')),/CONNECTOR/);
-   await db.query("UPDATE accounts SET snapshot='{\"demoProtocol\":1}' WHERE id=$1",[account]);
+   await db.query("UPDATE accounts SET snapshot='{\"demoProtocol\":2}' WHERE id=$1",[account]);
   });
   await t.test('Telegram mode requires a linked owner, AUTO works without Telegram',async()=>{
    await assert.rejects(tx(x=>controlDemo(x,user,account,'start','TELEGRAM')),/TELEGRAM/);

@@ -21,12 +21,12 @@ def write_settings(path, settings):
 MAGIC = 2601023
 REASONS = {
  'APPROVAL':'Telegramda təsdiqin gözlənilir. Təsdiqsiz giriş yoxdur.', 'DECLINED':'Təklif rədd edildi və ya vaxtı bitdi. Əmr göndərilmir.',
- 'OFF':'Demo sınağı aktiv deyil.', 'EXPIRED':'İki saatlıq sınaq bitdi. Yeni əməliyyat açılmır.',
+ 'OFF':'Demo sınağı aktiv deyil.', 'EXPIRED':'Seçilmiş müddət bitdi. Yeni girişlər dayandırılıb.',
  'REAL_BLOCKED':'Uyğun demo hesabı yoxdur. Əməliyyat bloklandı.',
  'ALGO_OFF':'MT5-də Algo Trading və xarici Python ticarət icazəsini aktivləşdir.',
  'LOSS_LIMIT':'Sessiya üzrə 1% equity itkisi həddi. Yeni girişlər dayandırıldı.',
  'POSITION_EXISTS':'Açıq mövqe və ya gözləyən əmr var. Yeni mövqe açılmır.',
- 'LIMIT':'Maksimum 3 cəhd tamamlandı.', 'COOLDOWN':'Yeni giriş üçün 30 dəqiqəlik fasilə.',
+ 'LIMIT':'Seçilmiş əməliyyat sayı tamamlandı. Yenidən başlatmaq üçün saytdan Başlat seç.', 'LIMIT_WAIT':'Seçilmiş sayda mövqe açılıb. Son bağlanmanın təsdiqi gözlənilir.', 'COOLDOWN':'Seçilmiş giriş tezliyinə görə fasilə gözlənilir.',
  'WAITING':'Təzə AI yönü və uyğun EMA/RSI siqnalı gözlənilir.',
  'UNKNOWN':'Əmrin nəticəsi qeyri-müəyyəndir. Yeni girişlər bloklandı; MT5 tarixçəsini yoxla.',
  'FILLED':'Demo əməliyyatı broker tərəfindən təsdiqləndi. SL və TP göndərilib.',
@@ -85,6 +85,10 @@ def technical_signal(packet, now):
     return (direction,atr) if direction else None
 
 
+def expired(settings,now):
+    return settings.get('expiresAt') is not None and now>=settings['expiresAt']
+
+
 def epoch(value):
     try:return datetime.fromisoformat(value.replace('Z','+00:00')).timestamp()
     except (ValueError,AttributeError,TypeError):return 0
@@ -95,8 +99,13 @@ class DemoPilot:
         self.root=Path(root);self.config=config;self.api=api;self.clock=clock;self.approval_client=approval_client
         self.root.mkdir(parents=True,exist_ok=True)
         self.ledger=self.root/'demo-orders.sqlite'
-        with self.db() as db:db.execute('CREATE TABLE IF NOT EXISTS attempts(k TEXT PRIMARY KEY,account TEXT NOT NULL,session TEXT NOT NULL,at REAL NOT NULL,state TEXT NOT NULL,request TEXT,result TEXT)')
-        self.status=dict(enabled=False,phase='OFF',reason=REASONS['OFF'],expiresAt=None,attempts=0,equityChange=0.0,riskPercent=0.25,maxAttempts=3)
+        with self.db() as db:
+            db.execute('CREATE TABLE IF NOT EXISTS attempts(k TEXT PRIMARY KEY,account TEXT NOT NULL,session TEXT NOT NULL,at REAL NOT NULL,state TEXT NOT NULL,request TEXT,result TEXT)')
+            columns={row[1] for row in db.execute('PRAGMA table_info(attempts)')}
+            if 'candidate' not in columns:db.execute('ALTER TABLE attempts ADD COLUMN candidate TEXT')
+            if 'reported' not in columns:db.execute('ALTER TABLE attempts ADD COLUMN reported INTEGER NOT NULL DEFAULT 0')
+            db.execute('CREATE TABLE IF NOT EXISTS history_positions(account TEXT NOT NULL,position TEXT NOT NULL,session TEXT,PRIMARY KEY(account,position))')
+        self.status=dict(enabled=False,phase='OFF',reason=REASONS['OFF'],expiresAt=None,attempts=0,equityChange=0.0,riskPercent=0.25,maxAttempts=None,tradeLimit=None,completedTrades=0,openedTrades=0)
 
     @contextmanager
     def db(self):
@@ -116,7 +125,10 @@ class DemoPilot:
             UUID(s['sessionId'])
             if s.get('enabled') is not True:return None
             if s['login']!=self.config['MT5_LOGIN'] or s['server']!=self.config['MT5_SERVER']:return None
-            if not 0<s['expiresAt']-s['startedAt']<=7200 or s['startedAt']>self.clock()+5:return None
+            if s['startedAt']>self.clock()+5:return None
+            if s.get('expiresAt') is None:
+                if s.get('unlimitedTime') is not True:return None
+            elif not 0<s['expiresAt']-s['startedAt']<=86400:return None
             return s
         except (OSError,ValueError,KeyError,TypeError):return None
 
@@ -127,28 +139,56 @@ class DemoPilot:
         try:return self._step(observations,stop_event,control)
         except Exception:return self.report('ERROR')
 
+    def collect_history(self):
+        from demo_bridge import collect_deals
+        account=self.config['MT5_SERVER']+':'+self.config['MT5_LOGIN']
+        with self.db() as db:
+            sessions={row[0] for row in db.execute('SELECT DISTINCT session FROM attempts WHERE account=?',(account,))}
+            positions={row[0]:row[1] for row in db.execute('SELECT position,session FROM history_positions WHERE account=?',(account,))}
+        rows=collect_deals(self.api,int(self.config['MT5_BROKER_UTC_OFFSET_MINUTES']),session_ids={'VELA-DEMO-'+s[:8]:s for s in sessions},positions=positions)
+        with self.db() as db:
+            for position,session in positions.items():db.execute('INSERT INTO history_positions VALUES(?,?,?) ON CONFLICT(account,position) DO UPDATE SET session=COALESCE(excluded.session,history_positions.session)',(account,position,session))
+        return rows
+
+    def report_outcomes(self):
+        if self.approval_client is None:return
+        with self.db() as db:pending=db.execute("SELECT k,candidate,state,result FROM attempts WHERE candidate IS NOT NULL AND reported=0 AND state IN('FILLED','REJECTED','UNKNOWN') ORDER BY at LIMIT 2").fetchall()
+        for key,candidate,state,result in pending:
+            try:
+                answer=self.approval_client.report(candidate,state,json.loads(result or '{}'))
+                if answer.get('ok') is True:
+                    with self.db() as db:db.execute('UPDATE attempts SET reported=1 WHERE k=?',(key,))
+            except Exception:pass
+
     def sync_remote(self,run,version):
         if not isinstance(run,dict) or run.get('enabled') is not True:
             disarm(self.root);return
         UUID(run['sessionId'])
-        start=epoch(run.get('startedAt'));end=epoch(run.get('expiresAt'))
-        if run.get('mode') not in ('AUTO','TELEGRAM') or not 0<end-start<=7200 or start>self.clock()+5 or end<=self.clock():
+        start=epoch(run.get('startedAt'));end=epoch(run.get('expiresAt')) if run.get('expiresAt') is not None else None
+        limit=run.get('tradeLimit');frequency=run.get('frequency','SIGNAL')
+        if run.get('mode') not in ('AUTO','TELEGRAM') or frequency not in ('SIGNAL','HOURLY') or start>self.clock()+5 or (end is not None and (not 0<end-start<=86400 or end<=self.clock())) or (limit is not None and (type(limit) is not int or not 1<=limit<=1000000)):
             disarm(self.root);return
+        progress=dict(completedTrades=run.get('completedTrades',0),openedTrades=run.get('openedTrades',0),tradeLimit=limit,frequency=frequency)
         with SETTINGS_LOCK:
             path=self.root/'demo-pilot.json'
             try:previous=json.loads(path.read_text(encoding='utf-8'))
             except (OSError,ValueError):previous={}
-            if previous.get('sessionId')==run['sessionId']:return
-            write_settings(path,dict(enabled=True,sessionId=run['sessionId'],login=self.config['MT5_LOGIN'],server=self.config['MT5_SERVER'],startedAt=start,expiresAt=end,startingEquity=None,permissionVersion=version,mode=run['mode']))
+            if previous.get('sessionId')==run['sessionId']:
+                previous.update(progress);write_settings(path,previous);return
+            write_settings(path,dict(enabled=True,sessionId=run['sessionId'],login=self.config['MT5_LOGIN'],server=self.config['MT5_SERVER'],startedAt=start,expiresAt=end,unlimitedTime=end is None,startingEquity=None,permissionVersion=version,mode=run['mode'],**progress))
 
     def _step(self,observations,stop_event,control):
         now=self.clock()
         if not isinstance(control,dict) or not isinstance(control.get('permissionVersion'),int) or not -5<=now-epoch(control.get('observedAt'))<=45:return self.report('DATA')
-        self.sync_remote(control.get('run'),control['permissionVersion'])
+        self.report_outcomes()
+        run=control.get('run')
+        self.sync_remote(run,control['permissionVersion'])
+        if isinstance(run,dict) and run.get('enabled') is False and run.get('stopReason') in ('COUNT_LIMIT','TIME_LIMIT'):
+            return self.report('LIMIT' if run['stopReason']=='COUNT_LIMIT' else 'EXPIRED',enabled=False,completedTrades=run.get('completedTrades',0),openedTrades=run.get('openedTrades',0),tradeLimit=run.get('tradeLimit'))
         s=self.settings()
         if not s or (stop_event and stop_event.is_set()):return self.report('OFF',enabled=False)
-        self.status.update(enabled=True,expiresAt=datetime.fromtimestamp(s['expiresAt'],timezone.utc).isoformat())
-        if now>=s['expiresAt']:return self.report('EXPIRED',enabled=False)
+        self.status.update(enabled=True,expiresAt=datetime.fromtimestamp(s['expiresAt'],timezone.utc).isoformat() if s['expiresAt'] is not None else None,tradeLimit=s.get('tradeLimit'),completedTrades=s.get('completedTrades',0),openedTrades=s.get('openedTrades',0))
+        if expired(s,now):return self.report('EXPIRED',enabled=False)
         with SETTINGS_LOCK:
             current=self.settings()
             if not current or current['sessionId']!=s['sessionId']:return self.report('OFF',enabled=False)
@@ -169,17 +209,22 @@ class DemoPilot:
         if not isinstance(baseline,(int,float)) or not math.isfinite(baseline) or baseline<=0:return self.report('DATA')
         self.status['equityChange']=round(a.equity-baseline,2)
         if a.equity<=baseline*0.99:
-            disarm(self.root);return self.report('LOSS_LIMIT',enabled=False)
+            disarm(self.root)
+            if self.approval_client is not None:
+                try:self.approval_client.halt(s,'LOSS_LIMIT')
+                except Exception:pass
+            return self.report('LOSS_LIMIT',enabled=False)
         account=s['server']+':'+s['login']
         with self.db() as db:
             if db.execute("SELECT 1 FROM attempts WHERE account=? AND state IN('SUBMITTING','UNKNOWN')",(account,)).fetchone():return self.report('UNKNOWN')
-            attempts,last=db.execute('SELECT count(*),max(at) FROM attempts WHERE session=?',(s['sessionId'],)).fetchone()
+            attempts,last,filled=db.execute("SELECT count(*),max(at),sum(CASE WHEN state='FILLED' THEN 1 ELSE 0 END) FROM attempts WHERE session=?",(s['sessionId'],)).fetchone()
         self.status['attempts']=attempts
-        if attempts>=3:return self.report('LIMIT')
+        opened=max(filled or 0,s.get('openedTrades',0));self.status['openedTrades']=opened
+        if s.get('tradeLimit') is not None and opened>=s['tradeLimit']:return self.report('LIMIT_WAIT')
         positions=api.positions_get();orders=api.orders_get()
         if positions is None or orders is None:return self.report('DATA')
         if positions or orders:return self.report('POSITION_EXISTS')
-        if last is not None and now-last<1800:return self.report('COOLDOWN')
+        if last is not None and now-last<(3600 if s.get('frequency')=='HOURLY' else 1800):return self.report('COOLDOWN')
         for symbol in ('EURUSD','XAUUSD'):
             entry=observations.get(symbol)
             if not entry:continue
@@ -226,6 +271,9 @@ class DemoPilot:
                      deviation=10,magic=MAGIC,comment='VELA-DEMO-'+s['sessionId'][:8],type_time=api.ORDER_TIME_GTC,type_filling=filling)
         if self.approval_client is None:return self.report('APPROVAL')
         approval=self.approval_client.prepare(s,packet,request)
+        if approval.get('state')=='COUNT_PENDING':return self.report('LIMIT_WAIT')
+        if approval.get('state')=='COOLDOWN':return self.report('COOLDOWN')
+        if approval.get('state')=='UNRESOLVED':return self.report('UNKNOWN')
         if approval.get('state')=='PENDING':return self.report('APPROVAL')
         if approval.get('state')!='APPROVED':return self.report('DECLINED')
         if not now<epoch(approval.get('expiresAt'))<=now+300:return self.report('DECLINED')
@@ -249,15 +297,15 @@ class DemoPilot:
         if risk is None or not math.isfinite(risk) or risk>=0 or abs(risk)>a.equity*.0025*.9 or margin is None or not math.isfinite(margin) or margin<=0 or margin>a.margin_free*.5:return self.report('DATA')
         # Read permissions and identity again immediately before reserving submission.
         current=self.settings()
-        if not current or current['sessionId']!=s['sessionId'] or self.clock()>=current['expiresAt'] or (stop_event and stop_event.is_set()):return self.report('OFF',enabled=False)
+        if not current or current['sessionId']!=s['sessionId'] or expired(current,self.clock()) or (stop_event and stop_event.is_set()):return self.report('OFF',enabled=False)
         if not self.identity(api.account_info()):return self.report('REAL_BLOCKED')
         if api.positions_get()!=() or api.orders_get()!=():return self.report('POSITION_EXISTS')
         key=account+':'+base+':'+str(packet['m5'][-1]['time'])+':'+direction
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             if db.execute('SELECT 1 FROM attempts WHERE k=?',(key,)).fetchone():return None
-            if db.execute('SELECT count(*) FROM attempts WHERE session=?',(s['sessionId'],)).fetchone()[0]>=3:return self.report('LIMIT')
-            db.execute("INSERT INTO attempts VALUES(?,?,?,?,?,?,NULL)",(key,account,s['sessionId'],now,'CHECKING',json.dumps(request)))
+            if s.get('tradeLimit') is not None and db.execute("SELECT count(*) FROM attempts WHERE session=? AND state='FILLED'",(s['sessionId'],)).fetchone()[0]>=s['tradeLimit']:return self.report('LIMIT_WAIT')
+            db.execute("INSERT INTO attempts(k,account,session,at,state,request,result,candidate) VALUES(?,?,?,?,?,?,NULL,?)",(key,account,s['sessionId'],now,'CHECKING',json.dumps(request),approval['id']))
         self.status['attempts']+=1
         try:
             check=api.order_check(request)
@@ -265,15 +313,18 @@ class DemoPilot:
         if check is None or check.retcode!=0:
             with self.db() as db:db.execute("UPDATE attempts SET state='REJECTED' WHERE k=?",(key,))
             return self.report('REJECTED')
-        grant=self.approval_client.claim(s,approval['id'])
+        try:grant=self.approval_client.claim(s,approval['id'])
+        except Exception:
+            with self.db() as db:db.execute("UPDATE attempts SET state='REJECTED' WHERE k=?",(key,))
+            return self.report('DECLINED')
         with SETTINGS_LOCK:
             current=self.settings()
             terminal=api.terminal_info()
             a=api.account_info()
-            if not current or current['sessionId']!=s['sessionId'] or self.clock()>=current['expiresAt'] or (stop_event and stop_event.is_set()) or not self.identity(a) or not terminal or not terminal.trade_allowed or terminal.tradeapi_disabled or not a.trade_allowed or not a.trade_expert or api.positions_get()!=() or api.orders_get()!=():
+            if not current or current['sessionId']!=s['sessionId'] or expired(current,self.clock()) or (stop_event and stop_event.is_set()) or not self.identity(a) or not terminal or not terminal.trade_allowed or terminal.tradeapi_disabled or not a.trade_allowed or not a.trade_expert or api.positions_get()!=() or api.orders_get()!=():
                 with self.db() as db:db.execute("UPDATE attempts SET state='REJECTED' WHERE k=?",(key,))
                 return self.report('OFF',enabled=False)
-            if grant.get('ok') is not True or grant.get('request')!=request or not self.identity(api.account_info()) or (stop_event and stop_event.is_set()) or not self.settings() or self.clock()>=s['expiresAt']:
+            if grant.get('ok') is not True or grant.get('request')!=request or not self.identity(api.account_info()) or (stop_event and stop_event.is_set()) or not self.settings() or expired(s,self.clock()):
                 with self.db() as db:db.execute("UPDATE attempts SET state='REJECTED' WHERE k=?",(key,))
                 return self.report('DECLINED')
             with self.db() as db:db.execute("UPDATE attempts SET state='SUBMITTING' WHERE k=?",(key,))
@@ -287,4 +338,5 @@ class DemoPilot:
         except Exception:result=None;state='UNKNOWN'
         safe={k:getattr(result,k,None) for k in ('retcode','order','deal','volume','price')}
         with self.db() as db:db.execute('UPDATE attempts SET state=?,result=? WHERE k=?',(state,json.dumps(safe),key))
+        self.report_outcomes()
         return self.report(state)
