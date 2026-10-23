@@ -4,6 +4,8 @@ Next.js/TypeScript ana ürün başlangıcı. Türkçe açık/koyu panel, Postgre
 
 ## Vercel: Redis gerektirmeyen web kurulumu
 
+İlk admini terminal kullanmadan oluşturmak için [tek kullanımlık /setup ekranı](docs/SETUP.md) eklendi. Vercel'de geçici SETUP_TOKEN tanımlayın, redeploy edin ve sitenizde `/setup` açın. Kurulum, şema ve MFA doğrulamasını tamamladıktan sonra otomatik giriş yapar; ilk admin oluşturulunca kapanır. Sonrasında geçici SETUP_TOKEN değerini kaldırın.
+
 Web ve giriş sistemi Redis kullanmaz. Giriş denemesi sınırı mevcut PostgreSQL bağlantısına taşınmıştır. Yeni `db/004_postgres_login_limits.sql` migration dosyasını uygulayın. Vercel'e REDIS_URL eklemeyin. Ayrıntılar: [Vercel kurulumu](docs/VERCEL.md). Mevcut BullMQ worker yalnızca ayrıca başlatılırsa Redis kullanır; bu web deploy'u için worker başlatmayın.
 
 ## Yerel kurulum

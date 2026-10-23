@@ -1,5 +1,10 @@
 # Vercel web deployment without Redis
 
+For the simpler first-admin flow, use [/setup](https://velatradingbot.vercel.app/setup)
+and follow [the browser setup guide](SETUP.md). It applies schema migrations itself
+when authorized by your temporary SETUP_TOKEN and a migration-capable connection.
+The manual migration/bootstrap instructions below remain available for CLI setups.
+
 The website and login no longer require REDIS_URL or a separate Redis service.
 Apply migrations through 004 before using login (`npm run migrate` with your
 migration administrator connection in a trusted setup environment). Existing
