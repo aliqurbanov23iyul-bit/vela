@@ -6,7 +6,7 @@ import type {PoolClient} from 'pg';
 import {applyMigrations} from '../src/server/migrations';
 import {runRestrictedTransaction} from '../src/server/db';
 import {digest} from '../src/server/security';
-import {compact,approvalKeyboard,proposalMessage} from '../src/server/telegram';
+import {compact,pairingCode,pairingPayload,approvalKeyboard,proposalMessage} from '../src/server/telegram';
 import {telegramContext,processTelegramUpdate,type TelegramUpdate} from '../src/server/telegram-update';
 test('Telegram buttons fit callback limit and messages show risk fields without secrets',()=>{
  const keyboard=approvalKeyboard(randomUUID(),randomUUID());for(const b of keyboard.inline_keyboard[0])assert.ok(Buffer.byteLength(b.callback_data)<=64);
@@ -17,6 +17,7 @@ test('Telegram rejects group and forged callback senders',()=>{
  assert.throws(()=>telegramContext({update_id:1,callback_query:{id:'x',from:{id:1,is_bot:false},data,message:{message_id:1,chat:{id:2,type:'private'}}}}));
  assert.throws(()=>telegramContext({update_id:1,message:{from:{id:1,is_bot:false},chat:{id:1,type:'group'},text:'/start x'}}));
 });
+test('Telegram deep link stays within allowed characters and binds the same one-time code',()=>{const tenant=randomUUID(),code=pairingCode(),payload=pairingPayload(tenant,code);assert.match(payload,/^[A-Za-z0-9_-]{44}$/);const u:TelegramUpdate={update_id:100,message:{from:{id:101,is_bot:false},chat:{id:101,type:'private'},text:'/start '+payload}};const context=telegramContext(u);assert.equal(context.tenant,tenant);assert.equal(context.code,code);assert.equal(telegramContext({...u,message:{...u.message!,text:`/start ${compact(tenant)}.${code}`}}).code,code);});
 test('PostgreSQL Telegram pairing, retry delivery, approval isolation and single consumption',async t=>{
  const db=new PGlite();const c={query:async(sql:string,values?:unknown[])=>{const r=values?await db.query(sql,values):(await db.exec(sql)).at(-1);return {...r,rowCount:r?.rows.length||r?.affectedRows||0};}} as unknown as PoolClient;
  const tenant=randomUUID(),other=randomUUID(),user=randomUUID(),account=randomUUID(),proposal=randomUUID(),approval=randomUUID();

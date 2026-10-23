@@ -8,7 +8,7 @@ export type TelegramUpdate=z.infer<typeof telegramUpdate>;
 export function telegramContext(u:TelegramUpdate){
  const cb=u.callback_query,m=u.message;
  if(cb){if(cb.from.is_bot||cb.message?.chat.type!=='private'||cb.message.chat.id!==cb.from.id)throw Error('INVALID');const p=cb.data.split('.');if(p.length===2&&p[1]==='S')return {tenant:expand(p[0]),command:'/status',telegramId:String(cb.from.id)};if(p.length!==3||!['A','R'].includes(p[2]))throw Error('INVALID');return {tenant:expand(p[0]),command:'callback',approvalId:expand(p[1]),decision:p[2]==='A'?'APPROVED':'REJECTED',telegramId:String(cb.from.id)};}
- if(!m||m.from.is_bot||m.chat.type!=='private'||m.chat.id!==m.from.id)throw Error('INVALID');const [cmd,arg]=m.text.trim().split(/\s+/);const command=cmd.split('@')[0];if(!['/start','/status','/stop'].includes(command)||!arg)throw Error('HELP');const p=arg.split('.');return {tenant:expand(p[0]),command,code:p[1],telegramId:String(m.from.id)};
+ if(!m||m.from.is_bot||m.chat.type!=='private'||m.chat.id!==m.from.id)throw Error('INVALID');const [cmd,arg]=m.text.trim().split(/\s+/);const command=cmd.split('@')[0];if(!['/start','/status','/stop'].includes(command)||!arg)throw Error('HELP');const p=command==='/start'&&/^[A-Za-z0-9_-]{44}$/.test(arg)?[arg.slice(0,22),arg.slice(22)]:arg.split('.');return {tenant:expand(p[0]),command,code:p[1],telegramId:String(m.from.id)};
 }
 export async function processTelegramUpdate(db:PoolClient,u:TelegramUpdate,c:ReturnType<typeof telegramContext>){
  const inserted=await db.query('INSERT INTO telegram_updates(update_id) VALUES($1) ON CONFLICT DO NOTHING RETURNING update_id',[u.update_id]);

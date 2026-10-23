@@ -13,7 +13,7 @@ export async function POST(req:Request){
   const id=claim.id;
   try{
    const source=`MT5:${b.symbol}:${summary.lastM5}`;
-   const ai=await analyze({analysis_id:id,snapshot_id:id,symbol:b.symbol,source_ids:[source],indicators:{...summary,analysisExpiresAt:new Date(Date.now()+180000).toISOString(),purpose:'Observation only. News/calendar and account risk are not connected. Do not present any output as an executable trade. Explain in Azerbaijani.'}});
+   const ai=await analyze({analysis_id:id,snapshot_id:id,symbol:b.symbol,source_ids:[source],indicators:{...summary,analysisExpiresAt:new Date(Date.now()+180000).toISOString(),purpose:'Observation only. News/calendar and account risk are not connected. Do not present any output as an executable trade. Explain in Azerbaijani.'}},fetch,claim.options);
    const result={formatVersion:2,bias:ai.action,action:'NO_TRADE',rationale:ai.rationale,provider:ai.provider,model:ai.model,failures:ai.failures,executionBlocks:summary.executionBlocks,source_ids:[source],expiresAt:'expires_at' in ai?ai.expires_at:null};
    await tenantTx(b.tenantId,db=>db.query("UPDATE market_analysis_runs SET status=$1,result=$2,completed_at=now() WHERE id=$3",[ai.provider?'COMPLETED':'NO_PROVIDER',JSON.stringify(result),id]));
    return NextResponse.json({ok:true,analysis:ai.provider?'COMPLETED':'NO_PROVIDER',provider:ai.provider,failures:ai.failures,dataIssues:summary.dataIssues,executionEnabled:false});
