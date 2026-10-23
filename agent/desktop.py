@@ -44,20 +44,54 @@ def set_startup(enabled):
                 pass
 
 
+class InstallError(Exception):
+    def __init__(self, stage, error):
+        self.stage = stage
+        self.code = getattr(error, 'winerror', None) or getattr(error, 'errno', None) or 0
+        super().__init__(stage)
+
+
+def create_shortcut(executable, destination=None):
+    # Native Windows COM, including redirected OneDrive desktop locations.
+    # No PowerShell, shell commands, or dynamically generated scripts.
+    import pythoncom
+    from win32com.shell import shell, shellcon
+    if destination is None:
+        destination = Path(shell.SHGetFolderPath(0, shellcon.CSIDL_DESKTOPDIRECTORY, None, 0)) / 'VELA.lnk'
+    # WScript.Shell.Save can convert non-ASCII desktop paths to the system ANSI
+    # codepage. IShellLinkW + IPersistFile keep Azerbaijani/Turkish paths intact.
+    shortcut = pythoncom.CoCreateInstance(shell.CLSID_ShellLink, None,
+                                         pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IShellLink)
+    shortcut.SetPath(str(executable))
+    shortcut.SetWorkingDirectory(str(Path(executable).parent))
+    shortcut.SetIconLocation(str(executable), 0)
+    shortcut.QueryInterface(pythoncom.IID_IPersistFile).Save(str(destination), 0)
+    if not Path(destination).is_file():
+        raise OSError('SHORTCUT_NOT_CREATED')
+
+
 def install():
     """Per-user installation only. No elevation, startup permission, or connection import."""
     if not FROZEN:
         raise ValueError('BUILD_REQUIRED')
-    ROOT.mkdir(parents=True, exist_ok=True)
-    if Path(sys.executable).resolve() != INSTALLED.resolve():
-        shutil.copy2(sys.executable, INSTALLED)
-    # Only the two fixed local paths go to the shortcut helper. No connection data.
-    env = dict(os.environ, VELA_EXE=str(INSTALLED))
-    script = "$w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'VELA.lnk')); $s.TargetPath=$env:VELA_EXE; $s.WorkingDirectory=(Split-Path $env:VELA_EXE); $s.IconLocation=$env:VELA_EXE+',0'; $s.Save()"
-    subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
-                   env=env, creationflags=NO_WINDOW, check=True, capture_output=True)
+    try:
+        ROOT.mkdir(parents=True, exist_ok=True)
+        if Path(sys.executable).resolve() != INSTALLED.resolve():
+            shutil.copy2(sys.executable, INSTALLED)
+    except OSError as error:
+        raise InstallError('COPY', error) from error
+    shortcut_ok = True
+    try:
+        create_shortcut(INSTALLED)
+    except Exception:
+        shortcut_ok = False  # optional shortcut must not prevent opening the app
+    env = dict(os.environ)
     env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
-    subprocess.Popen([str(INSTALLED)], env=env, creationflags=NO_WINDOW)
+    try:
+        subprocess.Popen([str(INSTALLED)], env=env, creationflags=NO_WINDOW, close_fds=True)
+    except OSError as error:
+        raise InstallError('OPEN', error) from error
+    return shortcut_ok
 
 
 def acquire_instance():
@@ -323,10 +357,20 @@ def setup_window():
     tk.Label(root, text='Python və CMD olmadan hesab bağlantısı.\nYalnız bu Windows istifadəçisi üçün quraşdırılır.\nMasaüstünə VELA ikonu əlavə olunacaq.', font=('Segoe UI', 11), fg='#637594', bg='#ffffff', justify='center').pack(pady=10)
     def proceed():
         try:
-            install()
+            shortcut_ok = install()
+            if not shortcut_ok:
+                messagebox.showinfo('VELA quraşdırıldı', 'VELA açılır. Masaüstü ikonu yaradıla bilmədi. Sonrakı dəfə Windows + R düymələri ilə %LOCALAPPDATA%\\VELAConnector\\VELA.exe ünvanını aç.', parent=root)
             root.destroy()
+        except InstallError as error:
+            if error.stage == 'COPY':
+                message = 'Proqram faylı kopyalanmadı. Açıq VELA varsa saatın yanındakı ikonundan Çıxış et və yenidən sına.'
+            elif error.code in (577, 1260, 4551):
+                message = 'Fayl kopyalandı, amma Windows təhlükəsizlik siyasəti proqramın açılmasını blokladı. Qorumanı söndürmə; proqramın imzalanması və ya administrator tərəfindən təsdiqi lazımdır.'
+            else:
+                message = 'Fayl kopyalandı, amma VELA açıla bilmədi. Bu xəta kodunu dəstəyə göndər.'
+            messagebox.showerror('VELA', message + '\n\nAddım: ' + error.stage + ' · Kod: ' + str(error.code), parent=root)
         except Exception:
-            messagebox.showerror('VELA', 'Quraşdırma tamamlanmadı. Açıq VELA varsa saatın yanındakı ikonundan Çıxış et və yenidən sına.', parent=root)
+            messagebox.showerror('VELA', 'Gözlənilməyən quraşdırma xətası. Kod: SETUP_UNKNOWN.', parent=root)
     tk.Button(root, text='Quraşdır və aç', command=proceed, bg='#1655f5', fg='#ffffff', font=('Segoe UI', 11, 'bold'), relief='flat', padx=28, pady=12).pack(pady=12)
     tk.Label(root, text='MT5 və kompüter açıq qalmalıdır · Yalnız demo', font=('Segoe UI', 9), fg='#637594', bg='#ffffff').pack()
     root.mainloop()
@@ -348,6 +392,11 @@ def self_test(output):
     assert ui.connect_button.cget('text') == 'Hesabı bağla'
     assert ui.process is None and not ui.status.connected()
     ui.root.destroy()
+    # Exercise native shortcut creation only in a temporary build-test folder.
+    # Never write the real desktop, installed executable, or user configuration.
+    import tempfile
+    with tempfile.TemporaryDirectory(dir=Path(output).resolve().parent) as scratch:
+        create_shortcut(sys.executable, Path(scratch) / 'VELA-test.lnk')
     Path(output).write_text(json.dumps({'ok': True, 'frozen': FROZEN, 'execution': 'disabled'}), encoding='utf-8')
 
 

@@ -1,5 +1,6 @@
 """Build a self-contained Windows x64 installer; never include user connection files."""
 import hashlib
+import argparse
 import os
 import subprocess
 import sys
@@ -7,9 +8,14 @@ from pathlib import Path
 from uuid import uuid4
 
 root = Path(__file__).resolve().parents[1]
-output = root / 'desktop-dist'
+parser = argparse.ArgumentParser()
+parser.add_argument('--output', default='desktop-dist')
+options = parser.parse_args()
+output = (root / options.output).resolve()
+if not output.is_relative_to(root):
+    raise ValueError('Build output must stay inside the workspace')
 work = root / '.desktop-build' / uuid4().hex
-output.mkdir(exist_ok=True)
+output.mkdir(parents=True, exist_ok=True)
 work.mkdir(parents=True, exist_ok=True)
 from PIL import Image, ImageDraw
 image = Image.new('RGBA', (256, 256), '#1655f5')

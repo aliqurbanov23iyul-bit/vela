@@ -16,6 +16,46 @@ def example():
 
 
 class ConnectorTests(unittest.TestCase):
+    def test_installer_shortcut_failure_does_not_block_launch(self):
+        import desktop
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / '.desktop-build') as tmp:
+            with patch.object(desktop, 'FROZEN', True), patch.object(desktop, 'ROOT', Path(tmp)), \
+                 patch.object(desktop, 'INSTALLED', Path(tmp) / 'VELA.exe'), \
+                 patch.object(desktop.shutil, 'copy2'), \
+                 patch.object(desktop, 'create_shortcut', side_effect=OSError('shortcut unavailable')), \
+                 patch.object(desktop.subprocess, 'Popen') as launch:
+                self.assertFalse(desktop.install())
+                launch.assert_called_once()
+                self.assertEqual(launch.call_args.kwargs['env']['PYINSTALLER_RESET_ENVIRONMENT'], '1')
+
+    def test_installer_identifies_copy_and_windows_launch_failure(self):
+        import desktop
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / '.desktop-build') as tmp:
+            with patch.object(desktop, 'FROZEN', True), patch.object(desktop, 'ROOT', Path(tmp)), \
+                 patch.object(desktop, 'INSTALLED', Path(tmp) / 'VELA.exe'), \
+                 patch.object(desktop.shutil, 'copy2', side_effect=PermissionError(13, 'private path')):
+                with self.assertRaises(desktop.InstallError) as caught:
+                    desktop.install()
+                self.assertEqual(caught.exception.stage, 'COPY')
+                self.assertNotIn('private path', str(caught.exception))
+            blocked = OSError('Windows signing policy')
+            blocked.winerror = 577
+            with patch.object(desktop, 'FROZEN', True), patch.object(desktop, 'ROOT', Path(tmp)), \
+                 patch.object(desktop, 'INSTALLED', Path(tmp) / 'VELA.exe'), \
+                 patch.object(desktop.shutil, 'copy2'), patch.object(desktop, 'create_shortcut'), \
+                 patch.object(desktop.subprocess, 'Popen', side_effect=blocked):
+                with self.assertRaises(desktop.InstallError) as caught:
+                    desktop.install()
+                self.assertEqual((caught.exception.stage, caught.exception.code), ('OPEN', 577))
+
+    def test_native_shortcut_can_be_created_without_powershell(self):
+        import desktop
+        import sys
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / '.desktop-build') as tmp:
+            target = Path(tmp) / 'VELA-test.lnk'
+            desktop.create_shortcut(sys.executable, target)
+            self.assertTrue(target.is_file())
+
     def test_desktop_entry_import_has_no_ui_or_connection_side_effects(self):
         import desktop
         self.assertFalse(desktop.FROZEN)
