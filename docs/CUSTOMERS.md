@@ -5,7 +5,7 @@
 ## Admin paneli
 
 - Admin sessiyasında solda **Kullanıcılar** görünür. Müştərilərdə bu bölmə görünmür və API də onlara qapalıdır.
-- **Yeni kullanıcı ekle**: ad soyad (istəyə bağlı), istifadəçi adı və ən azı 16 simvolluq şifrə. Müştəri ayrı tenant/OWNER üzvlüyü ilə yaradılır; super admin deyil. Admin yalnız yaratdığı və ayrıca grant verilmiş tenantları görür.
+- **Yeni kullanıcı ekle**: ad soyad (istəyə bağlı), istifadəçi adı və ən azı 8 simvolluq şifrə. Müştəri ayrı tenant/OWNER üzvlüyü ilə yaradılır; super admin deyil. Admin yalnız yaratdığı və ayrıca grant verilmiş tenantları görür.
 - Şifrə serverdə Argon2id ilə hash olunur; siyahı və profildə göstərilmir. Admin özü seçdiyi şifrəni müştəriyə təhlükəsiz kanalla verir. Şifrə reset və açıq qeydiyyat bu axına daxil deyil.
 - Siyahıda ad/username, girişin aktiv/askıda olması və MT5 hesab sayı göstərilir. Axtarış və 20 sətirlik səhifələmə var.
 - Profil real broker snapshot-dan bakiye, equity, margin, free margin, açıq pozisiyalar və gözləyən əmrləri göstərir. Currency ayrı saxlanılır; fərqli valyutalar toplanmır. Köhnə snapshot açıq işarələnir; əlaqəsiz hesab uğurla bağlı kimi təqdim edilmir.

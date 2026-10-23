@@ -16,7 +16,7 @@ export const maxDuration=60;
 const headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer'};
 const input=z.discriminatedUnion('action',[
   z.object({action:z.literal('prepare')}),
-  z.object({action:z.literal('finish'),challengeId:z.string().uuid(),username:z.string().regex(/^[a-zA-Z0-9_.-]{3,64}$/),password:z.string().min(16).max(256),otp:z.string().regex(/^\d{6}$/)})
+  z.object({action:z.literal('finish'),challengeId:z.string().uuid(),username:z.string().regex(/^[a-zA-Z0-9_.-]{3,64}$/),password:z.string().min(8).max(256),otp:z.string().regex(/^\d{6}$/)})
 ]);
 function response(error:string,status:number){return NextResponse.json({error},{status,headers});}
 async function transaction<T>(db:PoolClient,fn:()=>Promise<T>){
@@ -31,7 +31,7 @@ export async function POST(req:Request){
   try{sameOrigin(req);}catch{return response('APP_ORIGIN saytın HTTPS ünvanı ilə eyni olmalıdır.',403);}
   if(!setupEncryptionConfigured())return response('Vercel-də SECRET_KEY_HEX 64 simvolluq hex açarı olaraq qurulmalıdır.',503);
   const parsed=input.safeParse(await req.json().catch(()=>null));
-  if(!parsed.success)return response('İstifadəçi adı, ən azı 16 simvolluq şifrə və 6 rəqəmli kodu yoxlayın.',400);
+  if(!parsed.success)return response('İstifadəçi adı, ən azı 8 simvolluq şifrə və 6 rəqəmli kodu yoxlayın.',400);
   const connectionString=process.env.MIGRATION_DATABASE_URL||process.env.DATABASE_URL_UNPOOLED||process.env.DATABASE_URL;
   if(!connectionString)return response('Veritabanı bağlantısı qurulmayıb.',503);
   const admin=new Pool({connectionString,max:1,connectionTimeoutMillis:8000,query_timeout:30000});

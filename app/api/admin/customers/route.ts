@@ -16,7 +16,7 @@ export async function GET(req:Request){try{
 
 export async function POST(req:Request){try{
   sameOrigin(req);const session=await adminSession();
-  const b=z.object({username:z.string().regex(/^[a-zA-Z0-9_.-]{3,64}$/),password:z.string().min(16).max(256),displayName:z.string().trim().max(100).default('')}).strict().parse(await req.json());
+  const b=z.object({username:z.string().regex(/^[a-zA-Z0-9_.-]{3,64}$/),password:z.string().min(8).max(256),displayName:z.string().trim().max(100).default('')}).strict().parse(await req.json());
   const hash=await argon2.hash(b.password,{type:argon2.argon2id});
   const r=await pool.query('SELECT public.vela_create_customer($1,$2,$3,$4) AS id',[session,b.username,hash,b.displayName]);
   return NextResponse.json({id:r.rows[0].id},{status:201,headers});
