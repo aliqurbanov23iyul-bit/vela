@@ -18,7 +18,7 @@ CONFIG_PATH = ROOT / 'connection.dat'
 INSTALLED = ROOT / 'VELA.exe'
 FROZEN = bool(getattr(sys, 'frozen', False))
 NO_WINDOW = 0x08000000
-VERSION = '1.2.0'
+VERSION = '1.2.1'
 
 
 def record_status(event, error=None):

@@ -131,7 +131,7 @@ class DemoPilot:
         if not s or (stop_event and stop_event.is_set()):return self.report('OFF',enabled=False)
         self.status.update(enabled=True,expiresAt=datetime.fromtimestamp(s['expiresAt'],timezone.utc).isoformat())
         if now>=s['expiresAt']:return self.report('EXPIRED',enabled=False)
-        if not isinstance(control,dict) or not isinstance(control.get('permissionVersion'),int) or not 0<=now-epoch(control.get('observedAt'))<=45:return self.report('DATA')
+        if not isinstance(control,dict) or not isinstance(control.get('permissionVersion'),int) or not -5<=now-epoch(control.get('observedAt'))<=45:return self.report('DATA')
         with SETTINGS_LOCK:
             current=self.settings()
             if not current or current['sessionId']!=s['sessionId']:return self.report('OFF',enabled=False)

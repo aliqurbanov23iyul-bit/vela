@@ -35,6 +35,12 @@ class PilotTests(unittest.TestCase):
   self.assertEqual(self.step()['phase'],'FILLED');r=self.api.order_send.call_args.args[0]
   self.assertLessEqual(r['volume']*200,10000*.0025*.9)
   self.assertLess(r['sl'],r['price']);self.assertGreater(r['tp'],r['price']);self.assertEqual(r['type_filling'],1)
+ def test_small_server_clock_skew_is_tolerated_but_stale_ack_blocks(self):
+  self.control['observedAt']=self.iso(self.now+1)
+  self.assertEqual(self.step()['phase'],'FILLED')
+  self.control['observedAt']=self.iso(self.now-46)
+  self.assertEqual(self.step()['phase'],'DATA')
+  self.api.order_send.assert_called_once()
  def test_real_account_and_switch_never_send(self):
   for field,value in [('trade_mode',2),('login',321),('server','Other')]:
    old=getattr(self.account,field);setattr(self.account,field,value)
