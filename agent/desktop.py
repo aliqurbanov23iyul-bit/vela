@@ -348,7 +348,7 @@ class Desktop:
     def refresh_demo(self):
         try:
             d=json.loads((ROOT/'demo-pilot-status.json').read_text(encoding='utf-8'))
-            self.demo_text.set(d['reason']+' · Cəhd: '+str(d['attempts']) · Equity fərqi: '+str(d['equityChange']))
+            self.demo_text.set(d['reason']+' · Cəhd: '+str(d['attempts'])+' · Equity fərqi: '+str(d['equityChange']))
         except (OSError,ValueError,KeyError):pass
 
     def _start_tray(self):
