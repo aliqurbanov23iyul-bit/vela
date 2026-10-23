@@ -2,9 +2,13 @@
 
 Next.js/TypeScript ana ürün başlangıcı. Türkçe açık/koyu panel, PostgreSQL RLS, güvenli giriş, ayrı BullMQ worker ve MT5 read-only ajan içerir. **Canlı emir yürütme kapalıdır ve bu sürümde açılamaz.** Ayrıntılı kapsam: [mimari](docs/ARCHITECTURE.md), [kontrol raporu](docs/VALIDATION.md), [işletim](docs/OPERATIONS.md).
 
+## Vercel: Redis gerektirmeyen web kurulumu
+
+Web ve giriş sistemi Redis kullanmaz. Giriş denemesi sınırı mevcut PostgreSQL bağlantısına taşınmıştır. Yeni `db/004_postgres_login_limits.sql` migration dosyasını uygulayın. Vercel'e REDIS_URL eklemeyin. Ayrıntılar: [Vercel kurulumu](docs/VERCEL.md). Mevcut BullMQ worker yalnızca ayrıca başlatılırsa Redis kullanır; bu web deploy'u için worker başlatmayın.
+
 ## Yerel kurulum
 
-Node.js 20.9+ (burada 24.21.0 kullanıldı), PostgreSQL 18 ve Redis 8 gereklidir. Python ajan için Windows üzerinde broker'ın desteklediği MT5 terminali, uygun 64-bit Python ve çalışan broker oturumu gerekir. Web/worker Linux VPS'de olabilir; MT5 ajanını ayrı Windows VPS'de çalıştırın. Tarayıcı kapalıyken servisler çalışabilir; internet ve broker/AI/veri erişimi gerekir. Piyasalar her zaman açık değildir.
+Node.js 20.9+ (burada 24.21.0 kullanıldı), PostgreSQL 18 gereklidir. Redis 8 yalnızca ayrı BullMQ worker çalıştırılacaksa gerekir. Python ajan için Windows üzerinde broker'ın desteklediği MT5 terminali, uygun 64-bit Python ve çalışan broker oturumu gerekir. Web/worker Linux VPS'de olabilir; MT5 ajanını ayrı Windows VPS'de çalıştırın. Tarayıcı kapalıyken servisler çalışabilir; internet ve broker/AI/veri erişimi gerekir. Piyasalar her zaman açık değildir.
 
 1. `npm ci`
 2. `.env.example` dosyasını `.env` olarak kopyalayın. Benzersiz parola, APP_ORIGIN ve SECRET_KEY_HEX girin. Anahtar üretimi: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
