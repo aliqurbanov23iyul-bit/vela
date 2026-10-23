@@ -15,8 +15,11 @@ export async function claimMarket(db:PoolClient,b:MarketInput,raw:string,summary
  const last=await db.query("SELECT status,result FROM market_analysis_runs WHERE account_id=$1 AND symbol=$2 AND created_at>now()-($3*interval '1 minute') ORDER BY created_at DESC LIMIT 1",[b.accountId,b.symbol,config.effectiveInterval]);
  // A single format-upgrade retry is allowed only after an old invalid-output failure.
  // It still consumes the daily budget and requires a different closed candle.
- const previous=last.rows[0];const formatRetry=previous?.status==='NO_PROVIDER'&&previous.result?.formatVersion!==2&&previous.result?.failures?.some((f:{reason:string})=>f.reason==='INVALID_OUTPUT');
- if(previous&&!formatRetry)return {id:null,reason:'COOLDOWN'};
+ const previous=last.rows[0];const formatRetry=previous?.status==='NO_PROVIDER'&&Number(previous.result?.formatVersion??0)<2&&previous.result?.failures?.some((f:{reason:string})=>f.reason==='INVALID_OUTPUT');
+ // One bounded news-context upgrade after an old successful technical-only run.
+ // New format-3 results cannot repeat it; same-bar and daily budget still apply.
+ const newsUpgrade=previous?.status==='COMPLETED'&&previous.result?.formatVersion===2&&!previous.result?.newsEvidence;
+ if(previous&&!formatRetry&&!newsUpgrade)return {id:null,reason:'COOLDOWN'};
  const count=await db.query("SELECT count(*)::int AS n FROM market_analysis_runs WHERE account_id=$1 AND created_at>=(date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')",[b.accountId]);if(count.rows[0].n>=config.service.dailyLimit)return {id:null,reason:'DAILY_AI_LIMIT'};
  const id=randomUUID();const r=await db.query("INSERT INTO market_analysis_runs(id,tenant_id,account_id,symbol,bar_at,status) VALUES($1,$2,$3,$4,$5,'RUNNING') ON CONFLICT(account_id,symbol,bar_at) DO NOTHING RETURNING id",[id,b.tenantId,b.accountId,b.symbol,summary.lastM5]);return {id:r.rowCount?id:null,reason:r.rowCount?'STARTED':'SAME_BAR',options:{order:config.service.order,models:config.service.models}};
 }
