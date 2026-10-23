@@ -9,3 +9,5 @@ __pycache__/
 .logs/
 vela-connection*.json
 *.sqlite*
+.desktop-build/
+desktop-dist/

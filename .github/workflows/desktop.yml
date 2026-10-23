@@ -1,0 +1,44 @@
+name: VELA Windows Connector
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - 'scripts/build-desktop.py'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Install build dependencies
+        run: python -m pip install -r agent/desktop-requirements.txt
+      - name: Test private storage, isolation, status and read-only lifecycle
+        run: |
+          New-Item -ItemType Directory -Force .desktop-build | Out-Null
+          python -m unittest discover -s agent -p test_connector.py -v
+      - name: Build self-contained Windows application
+        run: python scripts/build-desktop.py
+      - name: Test the frozen application without connecting an account
+        run: |
+          $probe = Join-Path $PWD 'desktop-dist/frozen-test.json'
+          $app = Start-Process -FilePath './desktop-dist/VELA-Setup.exe' -ArgumentList @('--self-test', $probe) -PassThru -WindowStyle Hidden
+          if (-not $app.WaitForExit(60000)) { throw 'Frozen self-test timed out' }
+          if ($app.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $probe)) { throw 'Frozen self-test failed' }
+          $result = Get-Content -LiteralPath $probe -Raw | ConvertFrom-Json
+          if (-not $result.ok -or -not $result.frozen) { throw 'Frozen runtime not verified' }
+      - name: Publish verified installer and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "connector-${{ github.run_number }}" desktop-dist/VELA-Setup.exe desktop-dist/SHA256SUMS.txt --target "${{ github.sha }}" --title "VELA Connector ${{ github.run_number }}" --notes-file docs/DESKTOP_RELEASE.md --latest

@@ -1,0 +1,103 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+from connector_core import (validate_config, read_config, save_config, load_config,
+                            ConnectionStatus, classify_error, protect)
+
+
+def example():
+    return dict(APP_ORIGIN='https://velatradingbot.vercel.app', MT5_LOGIN='123456',
+                MT5_SERVER='MetaQuotes-Demo', MT5_TERMINAL_PATH=r'C:\Program Files\MetaTrader 5\terminal64.exe',
+                MT5_ACCOUNT_ID='00000000-0000-4000-8000-000000000001',
+                MT5_TENANT_ID='00000000-0000-4000-8000-000000000002',
+                MT5_AGENT_TOKEN='test_' + 'a'*43, MT5_BROKER_UTC_OFFSET_MINUTES='180')
+
+
+class ConnectorTests(unittest.TestCase):
+    def test_desktop_entry_import_has_no_ui_or_connection_side_effects(self):
+        import desktop
+        self.assertFalse(desktop.FROZEN)
+
+    def test_origin_and_credentials_validated_before_import(self):
+        for change in [dict(APP_ORIGIN='https://example.com'), dict(MT5_LOGIN='1&bad'),
+                       dict(MT5_TENANT_ID='invalid'), dict(MT5_AGENT_TOKEN='short'),
+                       dict(MT5_BROKER_UTC_OFFSET_MINUTES='181')]:
+            with self.assertRaises(ValueError):
+                validate_config(dict(example(), **change))
+        self.assertNotIn('unexpected', validate_config(dict(example(), unexpected='ignored')))
+
+    def test_oversized_file_rejected(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / '.desktop-build') as tmp:
+            path = Path(tmp) / 'config.json'
+            path.write_text(' ' * 32769)
+            with self.assertRaises(ValueError):
+                read_config(path)
+
+    def test_current_user_encrypted_storage_roundtrip(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / '.desktop-build') as tmp:
+            path = Path(tmp) / 'connection.dat'
+            save_config(path, example())
+            self.assertNotIn(example()['MT5_AGENT_TOKEN'].encode(), path.read_bytes())
+            self.assertEqual(load_config(path), example())
+            self.assertFalse(path.with_suffix('.tmp').exists())
+
+    def test_corrupt_encrypted_storage_fails(self):
+        with self.assertRaises(OSError):
+            protect(b'not encrypted', decrypt=True)
+
+    def test_connected_requires_recent_acknowledgment_and_running_worker(self):
+        status = ConnectionStatus()
+        status.started()
+        self.assertFalse(status.connected(100))
+        status.acknowledge(100)
+        self.assertTrue(status.connected(144))
+        self.assertFalse(status.connected(145))
+        status.stopped('Stopped')
+        self.assertFalse(status.connected(101))
+
+    def test_error_classification_does_not_return_exception_text(self):
+        secret = 'private_token_do_not_show'
+        self.assertEqual(classify_error(RuntimeError(secret)), 'UNKNOWN')
+        self.assertEqual(classify_error(RuntimeError('Terminal disconnected ' + secret)), 'TERMINAL')
+        self.assertEqual(classify_error(RuntimeError('Account identity mismatch')), 'IDENTITY')
+        import requests
+        response = requests.Response()
+        response.status_code = 403
+        self.assertEqual(classify_error(requests.HTTPError(secret, response=response)), 'AUTH')
+
+    def test_agent_cooperatively_stops_without_trading_or_terminating_terminal(self):
+        import threading
+        import main
+        event = threading.Event()
+        calls = []
+        class Account:
+            login=123456; server='MetaQuotes-Demo'; trade_mode=0; currency='USD'
+            balance=1000; equity=1000; margin=0; margin_free=1000
+        class Terminal:
+            connected=True
+        class Response:
+            def raise_for_status(self): pass
+        env = {k: v for k, v in example().items()}
+        def ack():
+            calls.append('ack')
+            event.set()
+        with patch.dict('os.environ', env), patch.object(main.mt5, 'initialize', return_value=True), \
+             patch.object(main.mt5, 'account_info', return_value=Account()), \
+             patch.object(main.mt5, 'terminal_info', return_value=Terminal()), \
+             patch.object(main.mt5, 'positions_get', return_value=[]), \
+             patch.object(main.mt5, 'orders_get', return_value=[]), \
+             patch.object(main.mt5, 'shutdown') as shutdown, \
+             patch.object(main.mt5, 'order_send') as order, \
+             patch.object(main, 'collect_market', side_effect=RuntimeError('test')), \
+             patch.object(main.requests, 'post', return_value=Response()) as post:
+            main.run(stop_event=event, on_snapshot=ack)
+            self.assertEqual(calls, ['ack'])
+            self.assertEqual(post.call_count, 1)
+            shutdown.assert_called_once()
+            order.assert_not_called()
+
+
+if __name__ == '__main__':
+    unittest.main()

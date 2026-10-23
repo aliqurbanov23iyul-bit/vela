@@ -15,7 +15,7 @@ def required(name):
         raise RuntimeError(f"Missing {name}")
     return value
 
-def run():
+def run(stop_event=None, on_snapshot=None):
     path = required("MT5_TERMINAL_PATH")
     login = int(required("MT5_LOGIN"))
     server = required("MT5_SERVER")
@@ -29,7 +29,7 @@ def run():
     market_jobs = {}
     next_market = 0
     try:
-        while True:
+        while stop_event is None or not stop_event.is_set():
             account = mt5.account_info()
             terminal = mt5.terminal_info()
             if account is None or terminal is None or not terminal.connected:
@@ -52,6 +52,10 @@ def run():
                                      headers={"Authorization": "Bearer " + required("MT5_AGENT_TOKEN")}, timeout=15)
             response.raise_for_status()
             print("Snapshot acknowledged; execution disabled", flush=True)
+            if on_snapshot is not None:
+                on_snapshot()
+            if stop_event is not None and stop_event.is_set():
+                break
             if time.monotonic() >= next_market:
                 next_market = time.monotonic() + 60
                 identity = {key: payload[key] for key in ('accountId', 'tenantId', 'login', 'server')}
@@ -69,9 +73,12 @@ def run():
                         market_jobs[symbol] = market_pool.submit(publish_market, origin, required('MT5_AGENT_TOKEN'), identity, market)
                     except Exception:
                         print('Market ' + symbol + ': candle history not ready; will retry', flush=True)
-            time.sleep(15)
+            if stop_event is None:
+                time.sleep(15)
+            else:
+                stop_event.wait(15)
     finally:
-        market_pool.shutdown(wait=False, cancel_futures=True)
+        market_pool.shutdown(wait=stop_event is not None, cancel_futures=True)
         mt5.shutdown()
 
 if __name__ == "__main__":
