@@ -18,7 +18,7 @@ Quraşdırma serverdə `MIGRATION_DATABASE_URL`, sonra `DATABASE_URL_UNPOOLED`, 
 
 Migration 002 yeni bazalarda cari database adını istifadə edir; `forex` adlı bazanı fərz etmir. Migration 005 owner bağlantısına `forex_app` rolunu seçmək üçün üzvlük verir. Normal web sorğuları hər transaction daxilində `SET LOCAL ROLE forex_app` icra edir: owner bağlantısı avtomatik verilsə belə tenant sorğuları məhdud rol/RLS ilə işləyir. Bu, transaction pooling ilə də uyğundur. Rol yoxdursa və ya icazə verilmirsə owner kimi davam edilmir. İstehsalda ayrıca məhdud runtime bağlantısı və ayrıca quraşdırma owner bağlantısı üstün tutulur; serverdə owner credential saxlamaq server kompromisi zamanı daha geniş risk yaradır.
 
-Migrations 001–005 və ledger eyni transaction-da tətbiq olunur. Mövcud cədvəllər migration tarixçəsi olmadan əl ilə yaradılıbsa avtomatik üzərinə yazılmır və silinmir; əvvəl tarixçə yoxlanmalıdır. İlk admin artıq varsa prepare heç bir migration və challenge yaratmır.
+Migrations 001–006 və ledger eyni transaction-da tətbiq olunur. Mövcud cədvəllər migration tarixçəsi olmadan əl ilə yaradılıbsa avtomatik üzərinə yazılmır və silinmir; əvvəl tarixçə yoxlanmalıdır. İlk admin artıq varsa prepare heç bir migration və challenge yaratmır.
 
 ## Təhlükəsizlik
 
@@ -34,3 +34,4 @@ Migrations 001–005 və ledger eyni transaction-da tətbiq olunur. Mövcud cəd
 ## Bu dəyişiklikdə yoxlamalar
 
 40 avtomatik test keçdi, o cümlədən PGlite daxili PostgreSQL mühərrikində schema, rollback, MFA səhv/expiry/limit, birinci hesab, ikinci quraşdırmanın bağlanması, runtime rolunun qadağaları və tenant RLS. Bu, istifadəçinin uzaq veritabanı və pooled connection şərtlərinin təsdiqi deyil. Real Vercel admin hesabı istifadəçi tərəfindən yaradılmalıdır. Tam canlı giriş/MFA yoxlaması bu addımdan sonra aparılır.
+
