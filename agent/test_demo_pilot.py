@@ -19,18 +19,27 @@ class PilotTests(unittest.TestCase):
   self.info=NS(trade_mode=4,order_mode=49,trade_tick_size=.00001,point=.00001,trade_stops_level=0,digits=5,volume_step=.01,volume_min=.01,volume_max=100,filling_mode=2,trade_exemode=2)
   self.api.symbol_info.return_value=self.info
   self.api.symbol_info_tick.return_value=NS(time_msc=self.now*1000,time=self.now,bid=1.1,ask=1.1001)
-  self.api.order_calc_profit.return_value=-200.;self.api.order_calc_margin.return_value=50.
+  self.api.order_calc_profit.side_effect=lambda kind,symbol,volume,price,sl:-200.*volume;self.api.order_calc_margin.return_value=50.
   self.api.order_check.return_value=NS(retcode=0)
   self.api.order_send.return_value=NS(retcode=10009,order=1,deal=2,volume=.11,price=1.1001)
   self.control={'permissionVersion':1,'observedAt':self.iso(self.now)}
   self.packet={'symbol':'EURUSD','brokerSymbol':'EURUSD','m5':[{'time':(self.now-300)*1000}]}
   self.obs={'EURUSD':(self.packet,{'dataIssues':[],'demoObservation':{'symbol':'EURUSD','newsAssessed':True,'bias':'BUY','expiresAt':self.iso(self.now+150)}})}
-  self.pilot=DemoPilot(self.root,self.cfg,self.api,lambda:self.now)
+  self.approval=Mock()
+  def prepare(settings,packet,request):
+   self.last_request=request
+   return {'state':'APPROVED','id':'candidate','expiresAt':self.iso(self.now+120),'request':request}
+  self.approval.prepare.side_effect=prepare
+  self.approval.claim.side_effect=lambda settings,candidate:{'ok':True,'request':self.last_request}
+  self.pilot=DemoPilot(self.root,self.cfg,self.api,lambda:self.now,approval_client=self.approval)
   self.signal=patch('demo_pilot.technical_signal',return_value=('BUY',.001));self.signal.start()
   self.addCleanup(self.signal.stop);self.addCleanup(self.tmp.cleanup)
   arm(self.root,self.cfg,self.now)
  def iso(self,t):return datetime.fromtimestamp(t,timezone.utc).isoformat()
- def step(self):return self.pilot.step(self.obs,control=self.control)
+ def remote_control(self):
+  s=json.loads((self.root/'demo-pilot.json').read_text())
+  return {**self.control,'run':dict(sessionId=s['sessionId'],enabled=s['enabled'],mode=s.get('mode','AUTO'),startedAt=self.iso(s['startedAt']),expiresAt=self.iso(s['expiresAt']))}
+ def step(self):return self.pilot.step(self.obs,control=self.remote_control())
  def test_demo_submission_has_risk_sized_volume_and_protection(self):
   self.assertEqual(self.step()['phase'],'FILLED');r=self.api.order_send.call_args.args[0]
   self.assertLessEqual(r['volume']*200,10000*.0025*.9)
@@ -41,6 +50,23 @@ class PilotTests(unittest.TestCase):
   self.control['observedAt']=self.iso(self.now-46)
   self.assertEqual(self.step()['phase'],'DATA')
   self.api.order_send.assert_called_once()
+ def test_telegram_pending_rejected_and_missing_grant_cannot_send(self):
+  for state in ['PENDING','REJECTED','EXPIRED']:
+   self.approval.prepare.side_effect=None;self.approval.prepare.return_value={'state':state}
+   self.assertIn(self.step()['phase'],['APPROVAL','DECLINED'])
+  self.api.order_send.assert_not_called();self.approval.claim.assert_not_called()
+ def test_remote_stop_prevents_new_entry(self):
+  control=self.remote_control();control['run']['enabled']=False
+  self.assertEqual(self.pilot.step(self.obs,control=control)['phase'],'OFF');self.api.order_send.assert_not_called()
+ def test_one_use_claim_denied_or_request_changed_blocks_send(self):
+  self.approval.claim.side_effect=None;self.approval.claim.return_value={'ok':False}
+  self.assertEqual(self.step()['phase'],'DECLINED');self.api.order_send.assert_not_called()
+ def test_changed_approved_volume_over_risk_blocks(self):
+  def prepare(settings,packet,request):return {'state':'APPROVED','id':'candidate','expiresAt':self.iso(self.now+120),'request':dict(request,volume=5.)}
+  self.approval.prepare.side_effect=prepare
+  self.assertEqual(self.step()['phase'],'DATA');self.api.order_send.assert_not_called()
+ def test_no_approval_client_never_sends(self):
+  self.pilot.approval_client=None;self.assertEqual(self.step()['phase'],'APPROVAL');self.api.order_send.assert_not_called()
  def test_real_account_and_switch_never_send(self):
   for field,value in [('trade_mode',2),('login',321),('server','Other')]:
    old=getattr(self.account,field);setattr(self.account,field,value)
@@ -49,7 +75,7 @@ class PilotTests(unittest.TestCase):
  def test_off_expired_and_missing_ack_never_send(self):
   self.assertEqual(self.pilot.step(self.obs)['phase'],'DATA')
   self.now+=7201;self.control['observedAt']=self.iso(self.now)
-  self.assertEqual(self.step()['phase'],'EXPIRED');disarm(self.root);self.assertEqual(self.step()['phase'],'OFF')
+  self.assertEqual(self.step()['phase'],'OFF');disarm(self.root);self.assertEqual(self.step()['phase'],'OFF')
   self.api.order_send.assert_not_called()
  def test_permissions_positions_and_pending_block(self):
   self.api.terminal_info.return_value.trade_allowed=False;self.assertEqual(self.step()['phase'],'ALGO_OFF')
@@ -76,7 +102,7 @@ class PilotTests(unittest.TestCase):
     self.api.order_send.return_value=reply
     self.assertEqual(self.step()['phase'],'UNKNOWN')
     other=DemoPilot(self.root,self.cfg,self.api,lambda:self.now)
-    self.assertEqual(other.step(self.obs,control=self.control)['phase'],'UNKNOWN')
+    self.assertEqual(other.step(self.obs,control=self.remote_control())['phase'],'UNKNOWN')
     self.assertEqual(self.api.order_send.call_count,1)
  def test_exception_send_never_retries(self):
   self.api.order_send.side_effect=TimeoutError();self.assertEqual(self.step()['phase'],'UNKNOWN');self.step();self.api.order_send.assert_called_once()

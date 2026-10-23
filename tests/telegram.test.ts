@@ -34,5 +34,14 @@ test('PostgreSQL Telegram pairing, retry delivery, approval isolation and single
   const callback=(id:number,scope=tenant,actor=101):TelegramUpdate=>({update_id:id,callback_query:{id:String(id),from:{id:actor,is_bot:false},data:`${compact(scope)}.${compact(approval)}.A`,message:{message_id:1,chat:{id:actor,type:'private'}}}});
   await t.test('another Telegram user and tenant cannot decide',async()=>{await assert.rejects(process(callback(5,tenant,102)));await assert.rejects(process(callback(6,other)));});
   await t.test('approval records decision and never creates a live order',async()=>{assert.match((await process(callback(7))).text,/✅ Təklif təsdiqləndi/);await assert.rejects(process(callback(8)));assert.equal((await db.query<{decision:string}>('SELECT decision FROM approvals')).rows[0].decision,'APPROVED');assert.equal((await db.query('SELECT * FROM orders')).rows.length,0);});
+  await t.test('Telegram stop changes only its tenant, preserving another customer',async()=>{
+   const otherAccount=randomUUID();
+   await db.query('INSERT INTO accounts(id,tenant_id,owner_id,label,stopped) VALUES($1,$2,$3,$4,false)',[otherAccount,other,user,'Other account']);
+   await db.query('UPDATE accounts SET stopped=false WHERE id=$1',[account]);
+   await process(message(9,`/stop ${compact(tenant)}`));
+   const own=(await db.query<{stopped:boolean;permission_version:number}>('SELECT stopped,permission_version FROM accounts WHERE id=$1',[account])).rows[0];
+   const separate=(await db.query<{stopped:boolean;permission_version:number}>('SELECT stopped,permission_version FROM accounts WHERE id=$1',[otherAccount])).rows[0];
+   assert.equal(own.stopped,true);assert.equal(own.permission_version,2);assert.equal(separate.stopped,false);assert.equal(separate.permission_version,1);
+  });
  }finally{await db.close();}
 });

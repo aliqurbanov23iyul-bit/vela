@@ -30,6 +30,8 @@ def run(stop_event=None, on_snapshot=None, demo_pilot=None):
     market_packets = {}
     observations = {}
     next_market = 0
+    next_history = 0
+    history_status = "ERROR"
     try:
         while stop_event is None or not stop_event.is_set():
             account = mt5.account_info()
@@ -58,7 +60,17 @@ def run(stop_event=None, on_snapshot=None, demo_pilot=None):
                     except Exception:
                         pass
             if demo_pilot is not None:
+                payload['connectorVersion']='1.3.0'
+                payload['demoProtocol']=1
                 payload['demoPilot']=dict(demo_pilot.status)
+                if time.monotonic()>=next_history:
+                    from demo_bridge import collect_deals
+                    next_history=time.monotonic()+60
+                    try:
+                        payload['deals']=collect_deals(mt5,int(os.environ.get('MT5_BROKER_UTC_OFFSET_MINUTES','0')))
+                        history_status='READY'
+                    except Exception:history_status='ERROR'
+                payload['historyStatus']=history_status
             response = requests.post(origin + "/api/agent/snapshot", json=payload,
                                      headers={"Authorization": "Bearer " + required("MT5_AGENT_TOKEN")}, timeout=15)
             response.raise_for_status()

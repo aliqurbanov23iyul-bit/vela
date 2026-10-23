@@ -18,7 +18,7 @@ CONFIG_PATH = ROOT / 'connection.dat'
 INSTALLED = ROOT / 'VELA.exe'
 FROZEN = bool(getattr(sys, 'frozen', False))
 NO_WINDOW = 0x08000000
-VERSION = '1.2.1'
+VERSION = '1.3.0'
 
 
 def record_status(event, error=None):
@@ -149,7 +149,7 @@ class Desktop:
         self.account_text = tk.StringVar(value='Hələ hesab seçilməyib')
         self.time_text = tk.StringVar(value='Son məlumat: —')
         self.startup = tk.BooleanVar(value=False if testing else startup_enabled())
-        self.demo_text = tk.StringVar(value='Demo sınağı aktiv deyil.')
+        self.demo_text = tk.StringVar(value='Botu saytda Ümumi baxışdan başlat.')
         self._build(ttk)
         self.root.protocol('WM_DELETE_WINDOW', self.hide)
         if testing:
@@ -203,10 +203,10 @@ class Desktop:
         self.startup_check.pack(anchor='w')
         demo_box=tk.Frame(body,bg='#ffffff',padx=14,pady=12)
         demo_box.pack(fill='x',pady=(12,0))
-        tk.Label(demo_box,text='2 saatlıq avtomatik DEMO sınağı',bg='#ffffff',fg='#17294d',font=('Segoe UI',11,'bold')).pack(anchor='w')
+        tk.Label(demo_box,text='Demo bot · Saytdan idarə olunur',bg='#ffffff',fg='#17294d',font=('Segoe UI',11,'bold')).pack(anchor='w')
         tk.Label(demo_box,textvariable=self.demo_text,bg='#ffffff',fg='#637594',font=('Segoe UI',9),wraplength=510,justify='left').pack(anchor='w',pady=7)
         demo_buttons=tk.Frame(demo_box,bg='#ffffff');demo_buttons.pack(anchor='w')
-        tk.Button(demo_buttons,text='Demo sınağı başlat',command=self.start_demo,bg='#1655f5',fg='#ffffff',relief='flat',padx=12,pady=7).pack(side='left')
+        tk.Button(demo_buttons,text='Saytdan idarə et',command=self.start_demo,bg='#1655f5',fg='#ffffff',relief='flat',padx=12,pady=7).pack(side='left')
         tk.Button(demo_buttons,text='Yeni girişləri dayandır',command=self.stop_demo,bg='#edf3ff',fg='#1655f5',relief='flat',padx=12,pady=7).pack(side='left',padx=7)
         if not FROZEN or Path(sys.executable).resolve() != INSTALLED.resolve():
             self.startup_check.configure(state='disabled')
@@ -272,7 +272,8 @@ class Desktop:
             from main import run
             from demo_pilot import DemoPilot
             import MetaTrader5 as mt5
-            pilot=DemoPilot(ROOT,config,mt5)
+            from demo_bridge import DemoApprovalClient
+            pilot=DemoPilot(ROOT,config,mt5,approval_client=DemoApprovalClient(config))
             def acknowledged():
                 record_status('CONNECTED')
                 self.events.put(('ack', generation, ''))
@@ -338,15 +339,7 @@ class Desktop:
         self.root.after(250, self.poll)
 
     def start_demo(self):
-        from tkinter import messagebox
-        if not self.account:
-            self.choose()
-            if not self.account:return
-        if not messagebox.askyesno('Yalnız virtual DEMO', '2 saatlıq virtual pul sınağı başlasın?\n\nƏn çox 3 cəhd, eyni anda 1 mövqe, planlanan risk 0,25%, SL/TP. AI yönü və EMA/RSI uyğun gəlməlidir. Tam xəbər təqvimi yoxdur; gəlirlilik təsdiqlənməyib. MT5-də hesabı dəyişmə.\n\nDayandırmaq açıq mövqeləri bağlamır.',parent=self.root):return
-        from demo_pilot import arm
-        arm(ROOT,self.account)
-        self.demo_text.set('Demo sınağı aktivləşdirildi; şərtlər yoxlanır…')
-        if self.process is None:self.start()
+        self.open_site()
 
     def stop_demo(self):
         from demo_pilot import disarm

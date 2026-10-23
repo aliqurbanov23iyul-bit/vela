@@ -20,6 +20,7 @@ def write_settings(path, settings):
 
 MAGIC = 2601023
 REASONS = {
+ 'APPROVAL':'Telegramda təsdiqin gözlənilir. Təsdiqsiz giriş yoxdur.', 'DECLINED':'Təklif rədd edildi və ya vaxtı bitdi. Əmr göndərilmir.',
  'OFF':'Demo sınağı aktiv deyil.', 'EXPIRED':'İki saatlıq sınaq bitdi. Yeni əməliyyat açılmır.',
  'REAL_BLOCKED':'Uyğun demo hesabı yoxdur. Əməliyyat bloklandı.',
  'ALGO_OFF':'MT5-də Algo Trading və xarici Python ticarət icazəsini aktivləşdir.',
@@ -90,8 +91,8 @@ def epoch(value):
 
 
 class DemoPilot:
-    def __init__(self,root,config,api,clock=time.time):
-        self.root=Path(root);self.config=config;self.api=api;self.clock=clock
+    def __init__(self,root,config,api,clock=time.time,approval_client=None):
+        self.root=Path(root);self.config=config;self.api=api;self.clock=clock;self.approval_client=approval_client
         self.root.mkdir(parents=True,exist_ok=True)
         self.ledger=self.root/'demo-orders.sqlite'
         with self.db() as db:db.execute('CREATE TABLE IF NOT EXISTS attempts(k TEXT PRIMARY KEY,account TEXT NOT NULL,session TEXT NOT NULL,at REAL NOT NULL,state TEXT NOT NULL,request TEXT,result TEXT)')
@@ -126,12 +127,28 @@ class DemoPilot:
         try:return self._step(observations,stop_event,control)
         except Exception:return self.report('ERROR')
 
+    def sync_remote(self,run,version):
+        if not isinstance(run,dict) or run.get('enabled') is not True:
+            disarm(self.root);return
+        UUID(run['sessionId'])
+        start=epoch(run.get('startedAt'));end=epoch(run.get('expiresAt'))
+        if run.get('mode') not in ('AUTO','TELEGRAM') or not 0<end-start<=7200 or start>self.clock()+5 or end<=self.clock():
+            disarm(self.root);return
+        with SETTINGS_LOCK:
+            path=self.root/'demo-pilot.json'
+            try:previous=json.loads(path.read_text(encoding='utf-8'))
+            except (OSError,ValueError):previous={}
+            if previous.get('sessionId')==run['sessionId']:return
+            write_settings(path,dict(enabled=True,sessionId=run['sessionId'],login=self.config['MT5_LOGIN'],server=self.config['MT5_SERVER'],startedAt=start,expiresAt=end,startingEquity=None,permissionVersion=version,mode=run['mode']))
+
     def _step(self,observations,stop_event,control):
-        s=self.settings();now=self.clock()
+        now=self.clock()
+        if not isinstance(control,dict) or not isinstance(control.get('permissionVersion'),int) or not -5<=now-epoch(control.get('observedAt'))<=45:return self.report('DATA')
+        self.sync_remote(control.get('run'),control['permissionVersion'])
+        s=self.settings()
         if not s or (stop_event and stop_event.is_set()):return self.report('OFF',enabled=False)
         self.status.update(enabled=True,expiresAt=datetime.fromtimestamp(s['expiresAt'],timezone.utc).isoformat())
         if now>=s['expiresAt']:return self.report('EXPIRED',enabled=False)
-        if not isinstance(control,dict) or not isinstance(control.get('permissionVersion'),int) or not -5<=now-epoch(control.get('observedAt'))<=45:return self.report('DATA')
         with SETTINGS_LOCK:
             current=self.settings()
             if not current or current['sessionId']!=s['sessionId']:return self.report('OFF',enabled=False)
@@ -207,6 +224,29 @@ class DemoPilot:
         else:return None
         request=dict(action=api.TRADE_ACTION_DEAL,symbol=symbol,volume=volume,type=kind,price=price,sl=sl,tp=tp,
                      deviation=10,magic=MAGIC,comment='VELA-DEMO-'+s['sessionId'][:8],type_time=api.ORDER_TIME_GTC,type_filling=filling)
+        if self.approval_client is None:return self.report('APPROVAL')
+        approval=self.approval_client.prepare(s,packet,request)
+        if approval.get('state')=='PENDING':return self.report('APPROVAL')
+        if approval.get('state')!='APPROVED':return self.report('DECLINED')
+        if not now<epoch(approval.get('expiresAt'))<=now+300:return self.report('DECLINED')
+        approved=approval.get('request')
+        if not isinstance(approved,dict) or any(approved.get(k)!=request[k] for k in ('action','symbol','type','deviation','magic','comment','type_time','type_filling')):return self.report('DATA')
+        request=approved
+        # Recheck the exact values shown in Telegram; never replace an approved
+        # volume/SL/TP with a different proposal as prices move.
+        tick=api.symbol_info_tick(symbol)
+        if tick is None:return self.report('DATA')
+        quote=(getattr(tick,'time_msc',0) or tick.time*1000)/1000-int(self.config['MT5_BROKER_UTC_OFFSET_MINUTES'])*60
+        current_price=tick.ask if direction=='BUY' else tick.bid
+        if not -5<=self.clock()-quote<=15 or abs(current_price-request['price'])>10*info.point or tick.ask-tick.bid>min(atr*0.25,0.0003 if base=='EURUSD' else 1.0):return self.report('DATA')
+        if not all(isinstance(request.get(k),(int,float)) and math.isfinite(request[k]) and request[k]>0 for k in ('volume','price','sl','tp')):return self.report('DATA')
+        if direction=='BUY' and not request['sl']<current_price<request['tp'] or direction=='SELL' and not request['tp']<current_price<request['sl']:return self.report('DATA')
+        if not info.volume_min<=request['volume']<=info.volume_max or abs(request['volume']/info.volume_step-round(request['volume']/info.volume_step))>1e-7:return self.report('DATA')
+        a=api.account_info()
+        if not self.identity(a):return self.report('REAL_BLOCKED')
+        risk=api.order_calc_profit(kind,symbol,request['volume'],current_price,request['sl'])
+        margin=api.order_calc_margin(kind,symbol,request['volume'],current_price)
+        if risk is None or not math.isfinite(risk) or risk>=0 or abs(risk)>a.equity*.0025*.9 or margin is None or not math.isfinite(margin) or margin<=0 or margin>a.margin_free*.5:return self.report('DATA')
         # Read permissions and identity again immediately before reserving submission.
         current=self.settings()
         if not current or current['sessionId']!=s['sessionId'] or self.clock()>=current['expiresAt'] or (stop_event and stop_event.is_set()):return self.report('OFF',enabled=False)
@@ -225,6 +265,7 @@ class DemoPilot:
         if check is None or check.retcode!=0:
             with self.db() as db:db.execute("UPDATE attempts SET state='REJECTED' WHERE k=?",(key,))
             return self.report('REJECTED')
+        grant=self.approval_client.claim(s,approval['id'])
         with SETTINGS_LOCK:
             current=self.settings()
             terminal=api.terminal_info()
@@ -232,6 +273,9 @@ class DemoPilot:
             if not current or current['sessionId']!=s['sessionId'] or self.clock()>=current['expiresAt'] or (stop_event and stop_event.is_set()) or not self.identity(a) or not terminal or not terminal.trade_allowed or terminal.tradeapi_disabled or not a.trade_allowed or not a.trade_expert or api.positions_get()!=() or api.orders_get()!=():
                 with self.db() as db:db.execute("UPDATE attempts SET state='REJECTED' WHERE k=?",(key,))
                 return self.report('OFF',enabled=False)
+            if grant.get('ok') is not True or grant.get('request')!=request or not self.identity(api.account_info()) or (stop_event and stop_event.is_set()) or not self.settings() or self.clock()>=s['expiresAt']:
+                with self.db() as db:db.execute("UPDATE attempts SET state='REJECTED' WHERE k=?",(key,))
+                return self.report('DECLINED')
             with self.db() as db:db.execute("UPDATE attempts SET state='SUBMITTING' WHERE k=?",(key,))
         # SUBMITTING is durably committed before the only broker send. Never retry
         # an exception, timeout, PLACED, or uncertain reply, even after restart.
