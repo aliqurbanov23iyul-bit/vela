@@ -89,7 +89,7 @@ class ConnectorTests(unittest.TestCase):
         app.generation = 2
         app.tray = None
         app.last_clock_ack = None
-        for key in ('connect_button', 'stop_button', 'indicator', 'status_label', 'message', 'time_text'):
+        for key in ('connect_button', 'stop_button', 'indicator', 'status_label', 'message', 'time_text', 'demo_text'):
             setattr(app, key, Mock())
         app.events.put(('ack', 2, ''))
         app.events.put(('exit', 1, ''))  # an old worker cannot affect the current one
@@ -109,6 +109,7 @@ class ConnectorTests(unittest.TestCase):
         app.root = Mock()
         app.events = queue.Queue()
         app.process = None
+        app.stop_demo = Mock()
         app.quitting = False
         app.tray = Mock()
         app.events.put(('quit', 0, ''))

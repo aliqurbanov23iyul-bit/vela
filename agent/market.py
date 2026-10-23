@@ -42,3 +42,4 @@ def publish_market(origin, token, identity, snapshot):
           '; data=' + ','.join(data.get('dataIssues', [])) + '; execution disabled', flush=True)
     for failure in data.get('failures', []):
         print('Provider ' + str(failure.get('provider')) + ': ' + str(failure.get('reason')), flush=True)
+    return data

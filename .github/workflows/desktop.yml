@@ -26,7 +26,7 @@ jobs:
       - name: Test private storage, isolation, status and read-only lifecycle
         run: |
           New-Item -ItemType Directory -Force .desktop-build | Out-Null
-          python -m unittest discover -s agent -p test_connector.py -v
+          python -m unittest discover -s agent -p "test_*.py" -v
       - name: Build self-contained Windows application
         run: python scripts/build-desktop.py
       - name: Test the frozen application without connecting an account

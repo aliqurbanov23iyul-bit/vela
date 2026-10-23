@@ -18,7 +18,7 @@ CONFIG_PATH = ROOT / 'connection.dat'
 INSTALLED = ROOT / 'VELA.exe'
 FROZEN = bool(getattr(sys, 'frozen', False))
 NO_WINDOW = 0x08000000
-VERSION = '1.1.4'
+VERSION = '1.2.0'
 
 
 def record_status(event, error=None):
@@ -129,8 +129,8 @@ class Desktop:
         self.tk = tk
         self.root = tk.Tk()
         self.root.title('VELA · Hesab bağlantısı · ' + VERSION)
-        self.root.geometry('620x650')
-        self.root.minsize(580, 620)
+        self.root.geometry('660x810')
+        self.root.minsize(580, 760)
         self.root.configure(bg='#f3f7ff')
         if testing:
             self.root.withdraw()
@@ -149,6 +149,7 @@ class Desktop:
         self.account_text = tk.StringVar(value='Hələ hesab seçilməyib')
         self.time_text = tk.StringVar(value='Son məlumat: —')
         self.startup = tk.BooleanVar(value=False if testing else startup_enabled())
+        self.demo_text = tk.StringVar(value='Demo sınağı aktiv deyil.')
         self._build(ttk)
         self.root.protocol('WM_DELETE_WINDOW', self.hide)
         if testing:
@@ -167,6 +168,7 @@ class Desktop:
         # autostart remains a separate, explicit opt-in setting.
         if self.account:
             self.root.after(500, self.start)
+        self.refresh_demo()
         self.root.after(250, self.poll)
 
     def _build(self, ttk):
@@ -199,12 +201,19 @@ class Desktop:
         options.pack(fill='x')
         self.startup_check = ttk.Checkbutton(options, text='Windows açılanda avtomatik bağlan', variable=self.startup, command=self.change_startup, style='VELA.TCheckbutton')
         self.startup_check.pack(anchor='w')
+        demo_box=tk.Frame(body,bg='#ffffff',padx=14,pady=12)
+        demo_box.pack(fill='x',pady=(12,0))
+        tk.Label(demo_box,text='2 saatlıq avtomatik DEMO sınağı',bg='#ffffff',fg='#17294d',font=('Segoe UI',11,'bold')).pack(anchor='w')
+        tk.Label(demo_box,textvariable=self.demo_text,bg='#ffffff',fg='#637594',font=('Segoe UI',9),wraplength=510,justify='left').pack(anchor='w',pady=7)
+        demo_buttons=tk.Frame(demo_box,bg='#ffffff');demo_buttons.pack(anchor='w')
+        tk.Button(demo_buttons,text='Demo sınağı başlat',command=self.start_demo,bg='#1655f5',fg='#ffffff',relief='flat',padx=12,pady=7).pack(side='left')
+        tk.Button(demo_buttons,text='Yeni girişləri dayandır',command=self.stop_demo,bg='#edf3ff',fg='#1655f5',relief='flat',padx=12,pady=7).pack(side='left',padx=7)
         if not FROZEN or Path(sys.executable).resolve() != INSTALLED.resolve():
             self.startup_check.configure(state='disabled')
         tk.Label(body, text='Pəncərəni bağlasan, VELA saatın yanında işləyir.\nTam çıxmaq üçün VELA ikonuna sağ klik → Çıxış.', font=('Segoe UI', 9), fg='#637594', bg='#f3f7ff', justify='left').pack(anchor='w', pady=14)
         footer = tk.Frame(self.root, bg='#ffffff', padx=28, pady=14)
         footer.pack(fill='x', side='bottom')
-        tk.Label(footer, text='DEMO · Avtomatik ticarət bağlıdır', bg='#ffffff', fg='#637594', font=('Segoe UI', 9)).pack(side='left')
+        tk.Label(footer, text='Yalnız DEMO · Real hesabda ticarət bloklanır', bg='#ffffff', fg='#637594', font=('Segoe UI', 9)).pack(side='left')
         tk.Button(footer, text='Saytı aç ↗', command=lambda: self.open_site(), relief='flat', bg='#ffffff', fg='#1655f5', font=('Segoe UI', 10), cursor='hand2').pack(side='right')
 
     def set_account(self, config):
@@ -261,10 +270,13 @@ class Desktop:
             for key in CONFIG_KEYS + ('MT5_BROKER_UTC_OFFSET_MINUTES',):
                 os.environ[key] = config[key]
             from main import run
+            from demo_pilot import DemoPilot
+            import MetaTrader5 as mt5
+            pilot=DemoPilot(ROOT,config,mt5)
             def acknowledged():
                 record_status('CONNECTED')
                 self.events.put(('ack', generation, ''))
-            run(stop_event=stop_event, on_snapshot=acknowledged)
+            run(stop_event=stop_event, on_snapshot=acknowledged,demo_pilot=pilot)
         except Exception as error:
             record_status('ERROR', error)
             self.events.put(('error', generation, classify_error(error)))
@@ -272,6 +284,7 @@ class Desktop:
             self.events.put(('exit', generation, ''))
 
     def stop(self):
+        self.stop_demo()
         if self.process is None:
             return
         self.stopping = True
@@ -321,7 +334,29 @@ class Desktop:
         self.time_text.set('Son təsdiqlənmiş məlumat: ' + (self.last_clock_ack or '—'))
         if self.tray:
             self.tray.title = 'VELA · ' + ('Bağlıdır' if online else 'Bağlanmayıb')
+        self.refresh_demo()
         self.root.after(250, self.poll)
+
+    def start_demo(self):
+        from tkinter import messagebox
+        if not self.account:
+            self.choose()
+            if not self.account:return
+        if not messagebox.askyesno('Yalnız virtual DEMO', '2 saatlıq virtual pul sınağı başlasın?\n\nƏn çox 3 cəhd, eyni anda 1 mövqe, planlanan risk 0,25%, SL/TP. AI yönü və EMA/RSI uyğun gəlməlidir. Tam xəbər təqvimi yoxdur; gəlirlilik təsdiqlənməyib. MT5-də hesabı dəyişmə.\n\nDayandırmaq açıq mövqeləri bağlamır.',parent=self.root):return
+        from demo_pilot import arm
+        arm(ROOT,self.account)
+        self.demo_text.set('Demo sınağı aktivləşdirildi; şərtlər yoxlanır…')
+        if self.process is None:self.start()
+
+    def stop_demo(self):
+        from demo_pilot import disarm
+        disarm(ROOT)
+
+    def refresh_demo(self):
+        try:
+            d=json.loads((ROOT/'demo-pilot-status.json').read_text(encoding='utf-8'))
+            self.demo_text.set(d['reason']+' · Cəhd: '+str(d['attempts'])+'/3 · Equity fərqi: '+str(d['equityChange']))
+        except (OSError,ValueError,KeyError):pass
 
     def _start_tray(self):
         try:

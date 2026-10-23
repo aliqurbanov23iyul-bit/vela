@@ -1,4 +1,4 @@
-"""One terminal, account and process. Read-only by construction; never calls order_send."""
+"""One terminal and DEMO account. Optional explicitly armed virtual-money pilot."""
 import os
 import argparse
 import json
@@ -15,7 +15,7 @@ def required(name):
         raise RuntimeError(f"Missing {name}")
     return value
 
-def run(stop_event=None, on_snapshot=None):
+def run(stop_event=None, on_snapshot=None, demo_pilot=None):
     path = required("MT5_TERMINAL_PATH")
     login = int(required("MT5_LOGIN"))
     server = required("MT5_SERVER")
@@ -27,6 +27,8 @@ def run(stop_event=None, on_snapshot=None):
         raise RuntimeError("Terminal initialization failed")
     market_pool = ThreadPoolExecutor(max_workers=2)
     market_jobs = {}
+    market_packets = {}
+    observations = {}
     next_market = 0
     try:
         while stop_event is None or not stop_event.is_set():
@@ -48,9 +50,20 @@ def run(stop_event=None, on_snapshot=None):
                        "freeMargin": account.margin_free, "positions": [p._asdict() for p in positions],
                        "orders": [o._asdict() for o in orders],
                        "observedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+            for symbol,job in list(market_jobs.items()):
+                if job.done():
+                    try:
+                        result=job.result()
+                        if result:observations[symbol]=(market_packets[symbol],result)
+                    except Exception:
+                        pass
+            if demo_pilot is not None:
+                payload['demoPilot']=dict(demo_pilot.status)
             response = requests.post(origin + "/api/agent/snapshot", json=payload,
                                      headers={"Authorization": "Bearer " + required("MT5_AGENT_TOKEN")}, timeout=15)
             response.raise_for_status()
+            if demo_pilot is not None:
+                demo_pilot.step(observations,stop_event,response.json().get('demoControl'))
             print("Snapshot acknowledged; execution disabled", flush=True)
             if on_snapshot is not None:
                 on_snapshot()
@@ -70,6 +83,7 @@ def run(stop_event=None, on_snapshot=None):
                             print('Market delivery interrupted; will retry with fresh data', flush=True)
                     try:
                         market = collect_market(symbol, int(os.environ.get('MT5_BROKER_UTC_OFFSET_MINUTES', '0')))
+                        market_packets[symbol] = market
                         market_jobs[symbol] = market_pool.submit(publish_market, origin, required('MT5_AGENT_TOKEN'), identity, market)
                     except Exception:
                         print('Market ' + symbol + ': candle history not ready; will retry', flush=True)
