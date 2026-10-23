@@ -30,5 +30,6 @@ test('PostgreSQL market identity, RLS and AI budget claims',async t=>{
   await t.test('per-account daily limit applies across symbols',async()=>{assert.equal((await claim({...b,symbol:'XAUUSD'},token,summary,{...limits,daily:1})).reason,'DAILY_AI_LIMIT');});
   await t.test('older packets cannot overwrite latest quote',async()=>{const older={...b,quoteAt:new Date(now-1000).toISOString()};assert.equal((await claim(older)).reason,'OLDER_SNAPSHOT');});
   await t.test('RLS hides another tenant market and results',async()=>{const r=await runRestrictedTransaction(c,other,x=>x.query('SELECT * FROM market_latest'));assert.equal(r.rowCount,0);assert.equal((await db.query('SELECT * FROM orders')).rows.length,0);});
+  await t.test('format upgrade allows one bounded retry after old invalid output, never an infinite loop',async()=>{await db.query("UPDATE market_analysis_runs SET created_at=now(),status='NO_PROVIDER',result=$1",[JSON.stringify({failures:[{provider:'fixture',reason:'INVALID_OUTPUT'}]})]);const next={...summary,lastM5:new Date(Date.parse(summary.lastM5)-300000).toISOString()};assert.ok((await claim(b,token,next,{...limits,daily:2})).id);assert.equal((await claim(b,token,next,{...limits,daily:2})).reason,'COOLDOWN');});
  }finally{await db.close();}
 });
