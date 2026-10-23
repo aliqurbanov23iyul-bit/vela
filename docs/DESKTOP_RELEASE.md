@@ -4,7 +4,7 @@ Download VELA-Setup.exe, open it, and choose “Quraşdır və aç”. The insta
 
 Open MetaTrader 5 and sign into your demo account. Download your own private connection JSON from VELA → Bağlantılar, select it in the app, and click “Hesabı bağla”. Close the old CMD connector before using this app. The green status requires a successful, recent server acknowledgment.
 
-Closing the window keeps VELA in the system tray. Right-click its icon and choose “Çıxış” to stop. Windows autostart is optional and off by default. Stop and exit finish outstanding read-only uploads before ending; this can take up to about 90 seconds when a network request is slow. MT5 is not terminated.
+Closing the window keeps VELA in the system tray. Right-click its icon and choose “Çıxış” to stop. Windows autostart is optional and off by default. Stop and exit finish outstanding market/snapshot uploads before ending; this can take up to about 90 seconds when a network request is slow. MT5 is not terminated. The explicitly armed DEMO pilot also runs in this connector; keep it running while a website session is active.
 
 Your imported credential is stored with Windows current-user DPAPI encryption. Never share the original JSON, which remains in Downloads until you remove it yourself. No personal config or keys are included in this installer.
 

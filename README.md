@@ -1,6 +1,6 @@
 # Vela · Forex AI SaaS
 
-Next.js/TypeScript ana ürün başlangıcı. Türkçe açık/koyu panel, PostgreSQL RLS, güvenli giriş, ayrı BullMQ worker ve MT5 read-only ajan içerir. **Canlı emir yürütme kapalıdır ve bu sürümde açılamaz.** Ayrıntılı kapsam: [mimari](docs/ARCHITECTURE.md), [kontrol raporu](docs/VALIDATION.md), [işletim](docs/OPERATIONS.md).
+Next.js/TypeScript əsaslı SaaS paneli, PostgreSQL RLS, təhlükəsiz giriş və Windows MT5 connector-u ehtiva edir. Sayt demo sessiyasını və AUTO/Telegram rejimini idarə edir; ayrıca Windows connector-u yalnız açıq aktiv edilmiş DEMO sessiyasında sifariş icra edə bilər. **Real hesabda sifariş bloklanıb.** Telefonla idarə olunan DEMO quruluşu üçün [Windows VPS təlimatına](docs/VPS_DEMO_SETUP.md), məhdudiyyətlər üçün [arxitekturaya](docs/ARCHITECTURE.md) baxın.
 
 ## Vercel: Redis gerektirmeyen web kurulumu
 
@@ -23,11 +23,11 @@ Node.js 20.9+ (burada 24.21.0 kullanıldı), PostgreSQL 18 gereklidir. Redis 8 y
 7. `npm run dev`; production için `npm run build` ve `npm start`. Next.js `.env` yükler. `APP_ORIGIN` tarayıcı origin'iyle birebir eşleşmelidir. Üretimde TLS zorunludur.
 8. Ayrı süreçte `npm run worker`. `.env` okunur. Sunucuya Redis erişimi gerekli; üretimde Redis auth/TLS ve özel ağ kullanın.
 
-## MT5 hesabını okuma amacıyla bağlama
+## MT5 DEMO hesabını bağlama
 
 OWNER oturumuyla Hesaplar & MT5 ekranında hesap kaydı açın. İşletim operatörü `npm run provision-agent -- TENANT_UUID ACCOUNT_UUID BROKER_LOGIN SERVER` ile token üretsin. `.env` içindeki migration bağlantısı yalnızca bu CLI için kullanılır. Token çıktısını yalnızca ajan secret deposuna aktarın.
 
-Windows VPS'de ayrı terminal dizini/oturumu açın ve doğru hesaba terminal üzerinden giriş yapın. `pip install -r agent/requirements.txt`. APP_ORIGIN, MT5_TERMINAL_PATH, MT5_LOGIN, MT5_SERVER, MT5_AGENT_TOKEN, MT5_ACCOUNT_ID, MT5_TENANT_ID ortam değişkenlerini tanımlayın. `python agent/main.py`. Ajan terminal oturumu değiştirmez; login/server uyuşmazlığında kapanır. Her hesap için ayrı süreç/terminal/token gereklidir. Ajan emir göndermez; sadece hesap/pozisyon/emir snapshot'ı gönderir. Son işlem yetkileri, sembol özellikleri, order_check, tarihçe uzlaştırması bu ajan sürümünde tamamlanmamıştır.
+MT5 terminalini Windows kompüterində və ya VPS-də açıb demo hesaba daxil ol. Saytdakı **Hesablar & MT5** axınında terminalin tam `terminal64.exe` yolunu verərək məxfi connector JSON-u endir. Bu layihədəki connector 1.4.0 installer-i Python mühiti və demo pilotu ilə gəlir. Connector-u qoşduqdan sonra təzə heartbeat və `demoProtocol: 2` görünməlidir. Saytın başlatma API-si istəyi saxlayır; sifariş yalnız davamlı Windows MT5 connector-unda siqnal, AI/xəbər, hesab, risk, qiymət və icazələr təsdiqlənəndə göndərilir. Şəxsi kompüter söndürüləndə işləməsi üçün MT5 və connector Windows VPS-də açıq qalmalıdır. Addımlar: [Windows VPS təlimatı](docs/VPS_DEMO_SETUP.md).
 
 ## Kontroller
 

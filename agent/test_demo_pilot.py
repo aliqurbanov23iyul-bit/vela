@@ -114,11 +114,11 @@ class PilotTests(unittest.TestCase):
  def test_stop_during_precheck_prevents_send(self):
   def check(request):disarm(self.root);return NS(retcode=0)
   self.api.order_check.side_effect=check;self.assertEqual(self.step()['phase'],'OFF');self.api.order_send.assert_not_called()
- def test_three_attempt_limit(self):
-  s=self.pilot.settings()
-  with self.pilot.db() as db:
-   for i in range(3):db.execute('INSERT INTO attempts VALUES(?,?,?,?,?,?,?)',(str(i),'Demo:123',s['sessionId'],self.now-2000,'REJECTED','{}','{}'))
-  self.assertEqual(self.step()['phase'],'LIMIT');self.api.order_send.assert_not_called()
+ def test_trade_limit_blocks_new_entry_after_limit_reached(self):
+  path=self.root/'demo-pilot.json';settings=json.loads(path.read_text());settings.update(tradeLimit=3,openedTrades=3,completedTrades=3);path.write_text(json.dumps(settings))
+  run=dict(sessionId=settings['sessionId'],enabled=True,mode='AUTO',startedAt=self.iso(settings['startedAt']),expiresAt=self.iso(settings['expiresAt']),tradeLimit=3,openedTrades=3,completedTrades=3)
+  control={**self.control,'run':run}
+  self.assertEqual(self.pilot.step(self.obs,control=control)['phase'],'LIMIT_WAIT');self.api.order_send.assert_not_called()
 
 class IndicatorTests(unittest.TestCase):
  def test_closed_oscillating_trend_and_stale_data(self):

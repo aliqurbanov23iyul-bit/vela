@@ -30,7 +30,9 @@ class DemoApprovalClient:
         return self.post({'operation':'report','candidateId':candidate,'state':state,'result':result})
 
     def halt(self,settings,reason):
-        return self.post({'operation':'halt','sessionId':settings['sessionId'],'reason':reason})
+        body={'operation':'halt','reason':reason}
+        if settings and settings.get('sessionId'):body['sessionId']=settings['sessionId']
+        return self.post(body)
 
 
 def collect_deals(api,offset_minutes,now=None,session_ids=None,positions=None):

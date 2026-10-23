@@ -1,4 +1,4 @@
-"""VELA Windows desktop entry point with one cooperative read-only MT5 thread."""
+"""VELA Windows MT5 connector and explicitly armed demo pilot."""
 import argparse
 import ctypes
 import json
@@ -30,6 +30,11 @@ def record_status(event, error=None):
     try:
         ROOT.mkdir(parents=True, exist_ok=True)
         (ROOT / 'connection-status.json').write_text(json.dumps(data), encoding='utf-8')
+        runtime={'event':'ERROR' if event in ('ERROR','CONFIG_ERROR') else event,'pid':os.getpid(),'at':data['at']}
+        if error is not None:runtime['reason']=safe_diagnostic(error)['category']
+        temporary=ROOT/'agent-process-status.tmp'
+        temporary.write_text(json.dumps(runtime),encoding='utf-8')
+        os.replace(temporary,ROOT/'agent-process-status.json')
     except OSError:
         pass
 
@@ -296,6 +301,12 @@ class Desktop:
         self.stop_button.configure(state='disabled')
 
     def poll(self):
+        stop_file=ROOT/'stop.request'
+        if stop_file.exists():
+            try:stop_file.unlink()
+            except OSError:pass
+            self.quitting=True
+            self.stop()
         while True:
             try:
                 kind, generation, value = self.events.get_nowait()
@@ -317,6 +328,7 @@ class Desktop:
                 elif kind == 'exit':
                     self.process = None
                     if self.stopping:
+                        record_status('STOPPED')
                         self.status.stopped('Bağlantı dayandırılıb. Yenidən başlamaq üçün Hesabı bağla düyməsinə bas.')
                     elif self.status.running:
                         self.status.stopped(ERROR_MESSAGES['UNKNOWN'])

@@ -3,11 +3,16 @@ import {z} from 'zod';
 import {identity,requireOwner,sameOrigin} from '../../../../src/server/auth';
 import {tenantTx} from '../../../../src/server/db';
 import {controlDemo,demoOptions,demoRun} from '../../../../src/server/demo-control';
+import {observeDemo} from '../../../../src/core/demo-status';
 export async function GET(){try{
  const s=await identity();
  const data=await tenantTx(s.tenant_id,async db=>{
   const accounts=(await db.query('SELECT a.id,a.label,a.account_type,a.heartbeat,a.snapshot,d.session_id,d.enabled,d.mode,d.started_at,d.expires_at,d.permission_version=a.permission_version AS current_permission,d.duration_hours,d.trade_limit,d.frequency,d.stop_reason FROM accounts a LEFT JOIN demo_control d ON d.account_id=a.id ORDER BY a.label')).rows;
-  for(const a of accounts){const run=await demoRun(db,a.id);Object.assign(a,{enabled:run?.enabled??false,completedTrades:run?.completedTrades??0,openedTrades:run?.openedTrades??0,stop_reason:run?.stopReason??null});}
+  for(const a of accounts){
+   const run=await demoRun(db,a.id),snapshot=a.snapshot as {demoPilot?:{enabled?:boolean;phase?:string;reason?:string}}|null;
+   const observed=observeDemo({desired:run?.enabled===true&&a.current_permission===true,accountType:a.account_type,heartbeatAt:a.heartbeat?new Date(a.heartbeat as string).toISOString():null,startedAt:run?.startedAt??null,pilot:snapshot?.demoPilot});
+   Object.assign(a,{enabled:run?.enabled??false,completedTrades:run?.completedTrades??0,openedTrades:run?.openedTrades??0,stop_reason:run?.stopReason??null,observedState:observed.state,observedReason:observed.reason});
+  }
   const deals=(await db.query('SELECT d.account_id,a.label,d.payload FROM demo_deals d JOIN accounts a ON a.id=d.account_id ORDER BY d.deal_at DESC LIMIT 100')).rows;
   const proposals=(await db.query("SELECT c.id,c.account_id,c.symbol,c.mode,c.created_at,c.expires_at,c.claimed_at,c.request,c.execution_state,p.decision FROM demo_candidates c LEFT JOIN approvals p ON p.id=c.approval_id ORDER BY c.created_at DESC LIMIT 20")).rows;
   const linked=!!(await db.query('SELECT 1 FROM telegram_links WHERE user_id=$1 AND telegram_id IS NOT NULL',[s.user_id])).rowCount;

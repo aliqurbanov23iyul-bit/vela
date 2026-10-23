@@ -39,7 +39,7 @@ def publish_market(origin, token, identity, snapshot):
     data = response.json()
     print('Market ' + snapshot['symbol'] + ': ' + str(data.get('analysis', 'UNKNOWN')) +
           '; provider=' + str(data.get('provider') or 'none') +
-          '; data=' + ','.join(data.get('dataIssues', [])) + '; execution disabled', flush=True)
+          '; data=' + ','.join(data.get('dataIssues', [])) + '; demo orders require pilot approval and risk checks', flush=True)
     for failure in data.get('failures', []):
         print('Provider ' + str(failure.get('provider')) + ': ' + str(failure.get('reason')), flush=True)
     return data

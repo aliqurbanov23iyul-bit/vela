@@ -117,7 +117,10 @@ export async function reportDemo(db:PoolClient,b:z.infer<typeof demoOutcome>,raw
  if(row.execution_state&&row.execution_state!==b.state)throw Error('RESULT_CONFLICT');
  await db.query('UPDATE demo_candidates SET execution_state=$1,execution_result=$2,reported_at=COALESCE(reported_at,now()) WHERE id=$3 AND account_id=$4',[b.state,JSON.stringify(b.result),b.candidateId,b.accountId]);return {ok:true};
 }
-export const demoHalt=agentIdentity.extend({operation:z.literal('halt'),sessionId:z.string().uuid(),reason:z.enum(['MANUAL','LOSS_LIMIT','UPGRADE'])}).strict();
+export const demoHalt=agentIdentity.extend({operation:z.literal('halt'),sessionId:z.string().uuid().optional(),reason:z.enum(['MANUAL','LOSS_LIMIT','UPGRADE'])}).strict();
 export async function haltDemo(db:PoolClient,b:z.infer<typeof demoHalt>,raw:string){
- await authenticatedDemo(db,b,raw);await db.query('UPDATE demo_control SET enabled=false,stop_reason=$1 WHERE account_id=$2 AND session_id=$3',[b.reason,b.accountId,b.sessionId]);return {ok:true};
+ await authenticatedDemo(db,b,raw);
+ if(b.sessionId)await db.query('UPDATE demo_control SET enabled=false,stop_reason=$1 WHERE account_id=$2 AND session_id=$3',[b.reason,b.accountId,b.sessionId]);
+ else await db.query('UPDATE demo_control SET enabled=false,stop_reason=$1 WHERE account_id=$2 AND enabled=true',[b.reason,b.accountId]);
+ return {ok:true};
 }

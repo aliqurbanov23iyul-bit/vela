@@ -1,6 +1,6 @@
 # Vela Forex AI — uygulanan mimari ve sınırlar
 
-Bu depo ana ürünün başlangıç uygulamasıdır. Üretime hazır veya talebin tamamını karşılıyor değildir. Gerçek emir yürütme bilerek yayımlanmamıştır. `accounts.live_enabled` üzerinde `CHECK(live_enabled = false)` vardır; worker hiçbir broker komutu üretmez ve ajan `order_send` çağırmaz. İZLEME dışındaki mod adları şemada bulunur; aktif mod değiştirme/aktivasyon uç noktası yoktur.
+Bu depo məhdud DEMO pilotu ehtiva edir; tam istehsal məhsulu deyil. `accounts.live_enabled` üzərində `CHECK(live_enabled = false)` real hesab ticarətini bloklayır. Demo idarəetməsi `/api/demo/control` vasitəsilə istəyi saxlayır; brokerə əmr yalnız hesab sahibi saytdan açıq sınaq başlatdıqda, davamlı Windows MT5 agentində və `agent/demo_pilot.py` risk/siqnal/onay yoxlamalarından sonra göndərilir. Vercel özü MT5 prosesi və ya davamlı ticarət dövrü işlətmir.
 
 ## Süreçler ve veri akışı
 
@@ -8,7 +8,7 @@ Tarayıcı → Next.js API → PostgreSQL. Oturumda seçilmiş tenant üyeliği 
 
 BullMQ `entries` kuyruğu → bağımsız worker → RLS transaction → hesap satırı kilidi → kalıcı emir durumu. Kuyruk yalnızca UUID referansları taşır, sır taşımaz. Runtime rolü tenant RLS kapsamındadır. Redis'e yalnızca sunucu servisleri erişmelidir; kuyruk üreticisi henüz ürüne bağlanmamıştır. Hatalı işler `failed-entry` kuyruğuna referans olarak yazılır. Yeniden başlayan worker SUBMITTING/UNKNOWN durumunu RECONCILING yapar ve tekrar emir göndermez. Gerçek broker uzlaştırması henüz uygulanmamıştır; bu yüzden işleme dönmez.
 
-Dedicated Windows MT5 terminali → Python read-only ajan → TLS/Bearer token → snapshot endpoint. Her ajan için ayrı hesap UUID, token, broker login, server ve terminal yolu vardır. Token SHA-256 özeti saklanır; terminal hesabı değişirse ajan kapanır. Tenant kimliği ajan mesajında bir yönlendirme bilgisidir; tek başına yetki sağlamaz. Veritabanında hesap ve token kapsamı birlikte doğrulanır. `provision-agent` güvenilen işletim operatörü için CLI'dır.
+Dedicated Windows MT5 terminali → Python connector/demo pilot → TLS/Bearer token → snapshot və market endpoint-ləri. Hər agent üçün ayrıca hesab UUID-si, token, broker login-i, server və terminal yolu vardır. Token SHA-256 özeti saxlanır; terminal hesabı dəyişərsə agent bağlanır. Tenant kimliyi agent mesajında təkbaşına səlahiyyət vermir. Verilənlər bazasında hesab və token əhatəsi birlikdə doğrulanır. Agent şəxsi PC-də işləyə bilər; telefon/PC-dən asılı olmadan 24/7 iş üçün həmin connector və MT5 terminalı Windows VPS-də quraşdırılmalıdır. VPS qurulması və brokerlə canlı sınaq bu repoda avtomatik edilməyib.
 
 AI adaptörleri yalnızca minimize edilmiş analiz snapshot'ı alır; hesabın kimliği, bakiye veya sır gönderilmemelidir. Gemini/Groq/OpenRouter için resmi OpenAI uyumlu REST yolları kullanılır. Model adları uydurulmaz; ortamda operatör tarafından seçilir. Zod alanları, analiz/snapshot kimliği, kaynak kimlikleri ve çıktı süresi denetlenir. Tüm sağlayıcılar başarısızsa NO_TRADE döner. AI katmanı emir tablosuna yazamaz. Circuit breaker süreç içidir; dağıtık breaker, parasal bütçe ve kalıcı değerlendirme raporları eksiktir. `AI_MAX_CALLS` çağrı sınırıdır, maliyet bütçesi değildir. Tek çağrı/provider yapılır; kör retry yoktur.
 

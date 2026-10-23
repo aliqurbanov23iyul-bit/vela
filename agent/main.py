@@ -3,6 +3,8 @@ import os
 import argparse
 import json
 import time
+import threading
+import ctypes
 from concurrent.futures import ThreadPoolExecutor
 from market import collect_market, publish_market
 from datetime import datetime, timezone
@@ -14,6 +16,27 @@ def required(name):
     if not value:
         raise RuntimeError(f"Missing {name}")
     return value
+
+def acquire_agent_mutex():
+    if os.name!='nt':return None
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    kernel.CreateMutexW.argtypes=[ctypes.c_void_p,ctypes.c_bool,ctypes.c_wchar_p]
+    kernel.CreateMutexW.restype=ctypes.c_void_p
+    handle=kernel.CreateMutexW(None,False,'Local\\VELAConnectorAgentV1')
+    if not handle:raise RuntimeError('Agent instance check failed')
+    if ctypes.get_last_error()==183:
+        kernel.CloseHandle.argtypes=[ctypes.c_void_p];kernel.CloseHandle(handle)
+        raise RuntimeError('Agent already running')
+    return handle
+
+def write_runtime_status(root,event,details=None):
+    from datetime import datetime,timezone
+    root=os.path.abspath(root);os.makedirs(root,exist_ok=True)
+    value={'event':event,'pid':os.getpid(),'at':datetime.now(timezone.utc).isoformat()}
+    if details:value.update(details)
+    temp=os.path.join(root,'agent-process-status.tmp')
+    with open(temp,'w',encoding='utf-8') as stream:json.dump(value,stream)
+    os.replace(temp,os.path.join(root,'agent-process-status.json'))
 
 def run(stop_event=None, on_snapshot=None, demo_pilot=None):
     path = required("MT5_TERMINAL_PATH")
@@ -76,7 +99,7 @@ def run(stop_event=None, on_snapshot=None, demo_pilot=None):
             response.raise_for_status()
             if demo_pilot is not None:
                 demo_pilot.step(observations,stop_event,response.json().get('demoControl'))
-            print("Snapshot acknowledged; execution disabled", flush=True)
+            print("Snapshot acknowledged; demo pilot status: " + str(demo_pilot.status.get('phase', 'OFF') if demo_pilot is not None else 'DISABLED'), flush=True)
             if on_snapshot is not None:
                 on_snapshot()
             if stop_event is not None and stop_event.is_set():
@@ -110,12 +133,19 @@ def run(stop_event=None, on_snapshot=None, demo_pilot=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', help='Private VELA connection JSON file')
+    parser.add_argument('--encrypted-config', action='store_true', help='Read the current-user DPAPI protected connection')
+    parser.add_argument('--control-dir', help='Local VELA status and cooperative stop directory')
     parser.add_argument('--broker-utc-offset-minutes', type=int, default=None, help='Explicit broker timestamp offset; never inferred from stale data')
     args = parser.parse_args()
+    mutex=acquire_agent_mutex()
     config = {}
     if args.config:
-        with open(args.config, encoding='utf-8-sig') as stream:
-            config = json.load(stream)
+        if args.encrypted_config:
+            from connector_core import load_config
+            config=load_config(args.config)
+        else:
+            from connector_core import read_config
+            config=read_config(args.config)
         names = ('MT5_TERMINAL_PATH', 'MT5_LOGIN', 'MT5_SERVER', 'APP_ORIGIN',
                  'MT5_ACCOUNT_ID', 'MT5_TENANT_ID', 'MT5_AGENT_TOKEN')
         for name in names:
@@ -129,4 +159,26 @@ if __name__ == "__main__":
     if abs(offset) > 840 or offset % 15:
         raise RuntimeError('Invalid broker UTC offset')
     os.environ['MT5_BROKER_UTC_OFFSET_MINUTES'] = str(offset)
-    run()
+    control_dir=args.control_dir or os.environ.get('LOCALAPPDATA',os.path.expanduser('~'))
+    stop_event=threading.Event()
+    stop_file=os.path.join(control_dir,'stop.request')
+    def watch_stop():
+        while not stop_event.wait(0.25):
+            try:
+                if os.path.exists(stop_file):
+                    os.remove(stop_file);stop_event.set()
+            except OSError:pass
+    watcher=threading.Thread(target=watch_stop,name='VELA-stop-watch',daemon=True);watcher.start()
+    write_runtime_status(control_dir,'STARTING')
+    try:
+        def acknowledged():write_runtime_status(control_dir,'CONNECTED')
+        from demo_pilot import DemoPilot
+        from demo_bridge import DemoApprovalClient
+        import MetaTrader5 as mt5_api
+        pilot=DemoPilot(control_dir,config,mt5_api,approval_client=DemoApprovalClient(config))
+        run(stop_event=stop_event,on_snapshot=acknowledged,demo_pilot=pilot)
+        write_runtime_status(control_dir,'STOPPED')
+    except Exception as error:
+        from connector_core import classify_error
+        write_runtime_status(control_dir,'ERROR',{'reason':classify_error(error)})
+        raise

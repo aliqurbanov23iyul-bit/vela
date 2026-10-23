@@ -6,7 +6,7 @@ import type {PoolClient} from 'pg';
 import {applyMigrations} from '../src/server/migrations';
 import {runRestrictedTransaction} from '../src/server/db';
 import {digest} from '../src/server/security';
-import {controlDemo,prepareDemo,claimDemo,brokerRequest,demoDeal} from '../src/server/demo-control';
+import {controlDemo,prepareDemo,claimDemo,reportDemo,brokerRequest,demoDeal} from '../src/server/demo-control';
 import {processTelegramUpdate,telegramContext} from '../src/server/telegram-update';
 import {compact} from '../src/server/telegram';
 
@@ -50,9 +50,11 @@ test('PostgreSQL website demo control, mode selection, Telegram grants and isola
   });
   await t.test('AUTO grant is bound to the exact request and single consumption',async()=>{
    const grant=await claim();assert.deepEqual(grant.request,request(run.sessionId));await assert.rejects(claim(),/EXPIRED/);
+   await tx(x=>reportDemo(x,{...identity,operation:'report',candidateId:candidate.id,state:'REJECTED',result:{retcode:10016}},token));
   });
   await db.query('INSERT INTO telegram_links(id,tenant_id,user_id,telegram_id) VALUES($1,$2,$3,\'101\')',[randomUUID(),tenant,user]);
   await t.test('Telegram candidate is sent once and cannot be claimed before approval',async()=>{
+   await tx(x=>controlDemo(x,user,account,'stop','TELEGRAM'));
    run=await tx(x=>controlDemo(x,user,account,'start','TELEGRAM'));candidate=await prepare();assert.equal(candidate.state,'PENDING');assert.ok(candidate.notification);
    assert.equal((await prepare()).notification,null);await assert.rejects(claim(),/APPROVAL_REQUIRED/);
   });
