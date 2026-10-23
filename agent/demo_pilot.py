@@ -6,6 +6,7 @@ import sqlite3
 import time
 import threading
 import os
+import time
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_FLOOR
 from pathlib import Path
@@ -16,7 +17,14 @@ SETTINGS_LOCK = threading.RLock()
 def write_settings(path, settings):
     temporary=path.with_suffix(".tmp")
     temporary.write_text(json.dumps(settings),encoding="utf-8")
-    os.replace(temporary,path)
+    for attempt in range(5):
+        try:
+            os.replace(temporary,path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(.05 * (attempt + 1))
 
 MAGIC = 2601023
 REASONS = {

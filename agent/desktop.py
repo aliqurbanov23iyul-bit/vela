@@ -133,15 +133,16 @@ class Desktop:
         from tkinter import ttk
         self.tk = tk
         self.root = tk.Tk()
-        self.root.title('VELA · Hesab bağlantısı · ' + VERSION)
-        self.root.geometry('660x810')
-        self.root.minsize(580, 760)
+        self.root.title('VELA · Botu idarə et · ' + VERSION)
+        self.root.geometry('620x680')
+        self.root.minsize(570, 640)
         self.root.configure(bg='#f3f7ff')
         if testing:
             self.root.withdraw()
         self.events = queue.Queue()
         self.status = ConnectionStatus()
         self.process = None
+        self.agent_mutex = None
         self.stop_event = threading.Event()
         self.stopping = False
         self.generation = 0
@@ -153,7 +154,6 @@ class Desktop:
         self.indicator = tk.StringVar(value='●  Bağlanmayıb')
         self.account_text = tk.StringVar(value='Hələ hesab seçilməyib')
         self.time_text = tk.StringVar(value='Son məlumat: —')
-        self.startup = tk.BooleanVar(value=False if testing else startup_enabled())
         self.demo_text = tk.StringVar(value='Botu saytda Ümumi baxışdan başlat.')
         self._build(ttk)
         self.root.protocol('WM_DELETE_WINDOW', self.hide)
@@ -169,10 +169,7 @@ class Desktop:
             self.message.set(ERROR_MESSAGES['CONFIG'])
         if background and self.tray:
             self.root.withdraw()
-        # Opening VELA reconnects its existing imported account. Windows login
-        # autostart remains a separate, explicit opt-in setting.
-        if self.account:
-            self.root.after(500, self.start)
+        # The connector starts only when the user presses the start button.
         self.refresh_demo()
         self.root.after(250, self.poll)
 
@@ -181,45 +178,39 @@ class Desktop:
         style = ttk.Style()
         style.theme_use('clam')
         style.configure('VELA.TCheckbutton', background='#ffffff', foreground='#536580', font=('Segoe UI', 10))
-        header = tk.Frame(self.root, bg='#ffffff', padx=30, pady=22)
+        header = tk.Frame(self.root, bg='#ffffff', padx=28, pady=20)
         header.pack(fill='x')
         tk.Label(header, text='◢  VELA', font=('Segoe UI', 25, 'bold'), fg='#1655f5', bg='#ffffff').pack(anchor='w')
-        tk.Label(header, text='Hesabınla sayt arasında sadə bağlantı.', font=('Segoe UI', 10), fg='#637594', bg='#ffffff').pack(anchor='w', pady=(4, 0))
-        body = tk.Frame(self.root, bg='#f3f7ff', padx=28, pady=22)
+        tk.Label(header, text='Botu bir düymə ilə başlat və təhlükəsiz dayandır.', font=('Segoe UI', 10), fg='#637594', bg='#ffffff').pack(anchor='w', pady=(4, 0))
+        body = tk.Frame(self.root, bg='#f3f7ff', padx=24, pady=20)
         body.pack(fill='both', expand=True)
-        card = tk.Frame(body, bg='#ffffff', padx=24, pady=20, highlightbackground='#e0e9fa', highlightthickness=1)
+        card = tk.Frame(body, bg='#ffffff', padx=22, pady=18, highlightbackground='#e0e9fa', highlightthickness=1)
         card.pack(fill='x')
-        self.status_label = tk.Label(card, textvariable=self.indicator, font=('Segoe UI', 17, 'bold'), fg='#637594', bg='#ffffff')
+        self.status_label = tk.Label(card, textvariable=self.indicator, font=('Segoe UI', 18, 'bold'), fg='#637594', bg='#ffffff')
         self.status_label.pack(anchor='w')
-        tk.Label(card, textvariable=self.account_text, font=('Segoe UI', 11), fg='#17294d', bg='#ffffff').pack(anchor='w', pady=(14, 5))
-        tk.Label(card, textvariable=self.message, font=('Segoe UI', 10), fg='#637594', bg='#ffffff', wraplength=490, justify='left').pack(anchor='w', pady=7)
-        tk.Label(card, textvariable=self.time_text, font=('Segoe UI', 9), fg='#637594', bg='#ffffff').pack(anchor='w', pady=(5, 0))
-        actions = tk.Frame(card, bg='#ffffff')
-        actions.pack(fill='x', pady=(18, 2))
-        self.connect_button = tk.Button(actions, text='Hesabı bağla', command=self.start, bg='#1655f5', fg='#ffffff', activebackground='#1045d3', activeforeground='#ffffff', relief='flat', font=('Segoe UI', 11, 'bold'), padx=20, pady=11, cursor='hand2')
-        self.connect_button.pack(side='left')
-        self.stop_button = tk.Button(actions, text='Dayandır', command=self.stop, bg='#edf3ff', fg='#1655f5', relief='flat', font=('Segoe UI', 10), padx=16, pady=12, state='disabled')
-        self.stop_button.pack(side='left', padx=10)
-        tk.Button(body, text='Bağlantı faylını seç və ya dəyiş  →', command=self.choose, relief='flat', bg='#f3f7ff', fg='#1655f5', font=('Segoe UI', 10), cursor='hand2', pady=14).pack(anchor='w')
-        tk.Label(body, text='1  MT5-i aç və demo hesabına daxil ol.\n2  Saytdan endirdiyin JSON faylını seç.\n3  “Hesabı bağla” düyməsinə bas.', font=('Segoe UI', 10), fg='#536580', bg='#f3f7ff', justify='left', anchor='w').pack(fill='x', pady=(0, 16))
-        options = tk.Frame(body, bg='#ffffff', padx=14, pady=12)
-        options.pack(fill='x')
-        self.startup_check = ttk.Checkbutton(options, text='Windows açılanda avtomatik bağlan', variable=self.startup, command=self.change_startup, style='VELA.TCheckbutton')
-        self.startup_check.pack(anchor='w')
-        demo_box=tk.Frame(body,bg='#ffffff',padx=14,pady=12)
-        demo_box.pack(fill='x',pady=(12,0))
-        tk.Label(demo_box,text='Demo bot · Saytdan idarə olunur',bg='#ffffff',fg='#17294d',font=('Segoe UI',11,'bold')).pack(anchor='w')
-        tk.Label(demo_box,textvariable=self.demo_text,bg='#ffffff',fg='#637594',font=('Segoe UI',9),wraplength=510,justify='left').pack(anchor='w',pady=7)
-        demo_buttons=tk.Frame(demo_box,bg='#ffffff');demo_buttons.pack(anchor='w')
-        tk.Button(demo_buttons,text='Saytdan idarə et',command=self.start_demo,bg='#1655f5',fg='#ffffff',relief='flat',padx=12,pady=7).pack(side='left')
-        tk.Button(demo_buttons,text='Yeni girişləri dayandır',command=self.stop_demo,bg='#edf3ff',fg='#1655f5',relief='flat',padx=12,pady=7).pack(side='left',padx=7)
-        if not FROZEN or Path(sys.executable).resolve() != INSTALLED.resolve():
-            self.startup_check.configure(state='disabled')
-        tk.Label(body, text='Pəncərəni bağlasan, VELA saatın yanında işləyir.\nTam çıxmaq üçün VELA ikonuna sağ klik → Çıxış.', font=('Segoe UI', 9), fg='#637594', bg='#f3f7ff', justify='left').pack(anchor='w', pady=14)
-        footer = tk.Frame(self.root, bg='#ffffff', padx=28, pady=14)
+        tk.Label(card, textvariable=self.account_text, font=('Segoe UI', 11), fg='#17294d', bg='#ffffff').pack(anchor='w', pady=(12, 4))
+        tk.Label(card, textvariable=self.message, font=('Segoe UI', 10), fg='#637594', bg='#ffffff', wraplength=500, justify='left').pack(anchor='w', pady=6)
+        tk.Label(card, textvariable=self.time_text, font=('Segoe UI', 9), fg='#637594', bg='#ffffff').pack(anchor='w', pady=(4, 0))
+        actions = tk.Frame(body, bg='#f3f7ff')
+        actions.pack(fill='x', pady=(16, 10))
+        self.connect_button = tk.Button(actions, text='VELA-nı başlat', command=self.start, bg='#1655f5', fg='#ffffff', activebackground='#1045d3', activeforeground='#ffffff', relief='flat', font=('Segoe UI', 12, 'bold'), padx=22, pady=14, cursor='hand2')
+        self.connect_button.pack(side='left', fill='x', expand=True)
+        self.stop_button = tk.Button(actions, text='VELA-nı dayandır', command=self.stop, bg='#e95159', fg='#ffffff', activebackground='#d83f49', activeforeground='#ffffff', relief='flat', font=('Segoe UI', 12, 'bold'), padx=18, pady=14, cursor='hand2', state='disabled')
+        self.stop_button.pack(side='left', fill='x', expand=True, padx=(10, 0))
+        tk.Button(body, text='Bağlantı faylını seç və ya dəyiş  →', command=self.choose, relief='flat', bg='#f3f7ff', fg='#1655f5', font=('Segoe UI', 10), cursor='hand2', pady=8).pack(anchor='w')
+        guide = tk.Frame(body, bg='#ffffff', padx=16, pady=13)
+        guide.pack(fill='x', pady=(4, 12))
+        tk.Label(guide, text='İlk dəfə qoşulursan?', font=('Segoe UI', 10, 'bold'), fg='#17294d', bg='#ffffff').pack(anchor='w')
+        tk.Label(guide, text='1  MT5-i aç və demo hesaba daxil ol.\n2  Saytdan endirilən VELA JSON faylını seç.\n3  Başlat düyməsinə bas; bağlantı hazır olanda sayt status göstərəcək.', font=('Segoe UI', 9), fg='#536580', bg='#ffffff', justify='left', anchor='w').pack(fill='x', pady=(6, 0))
+        demo_box = tk.Frame(body, bg='#ffffff', padx=16, pady=12)
+        demo_box.pack(fill='x')
+        tk.Label(demo_box, text='Demo əməliyyatları', bg='#ffffff', fg='#17294d', font=('Segoe UI', 10, 'bold')).pack(anchor='w')
+        tk.Label(demo_box, textvariable=self.demo_text, bg='#ffffff', fg='#637594', font=('Segoe UI', 9), wraplength=500, justify='left').pack(anchor='w', pady=(5, 7))
+        tk.Button(demo_box, text='Rejimi saytda seç  ↗', command=self.open_site, bg='#edf3ff', fg='#1655f5', relief='flat', font=('Segoe UI', 9, 'bold'), padx=12, pady=7, cursor='hand2').pack(anchor='w')
+        footer = tk.Frame(self.root, bg='#ffffff', padx=24, pady=12)
         footer.pack(fill='x', side='bottom')
         tk.Label(footer, text='Yalnız DEMO · Real hesabda ticarət bloklanır', bg='#ffffff', fg='#637594', font=('Segoe UI', 9)).pack(side='left')
-        tk.Button(footer, text='Saytı aç ↗', command=lambda: self.open_site(), relief='flat', bg='#ffffff', fg='#1655f5', font=('Segoe UI', 10), cursor='hand2').pack(side='right')
+        tk.Button(footer, text='Saytı aç ↗', command=self.open_site, relief='flat', bg='#ffffff', fg='#1655f5', font=('Segoe UI', 9), cursor='hand2').pack(side='right')
 
     def set_account(self, config):
         self.account = config
@@ -228,7 +219,7 @@ class Desktop:
     def choose(self):
         from tkinter import filedialog, messagebox
         if self.process is not None:
-            messagebox.showinfo('VELA', 'Faylı dəyişmək üçün əvvəl Dayandır düyməsinə bas.', parent=self.root)
+            messagebox.showinfo('VELA', 'Faylı dəyişmək üçün əvvəl VELA-nı dayandır.', parent=self.root)
             return
         path = filedialog.askopenfilename(parent=self.root, title='VELA bağlantı faylını seç', initialdir=str(Path.home() / 'Downloads'), filetypes=[('VELA bağlantısı', '*.json')])
         if not path:
@@ -237,7 +228,7 @@ class Desktop:
             config = read_config(path)
             save_config(CONFIG_PATH, config)
             self.set_account(config)
-            self.status.stopped('Fayl hazırdır. MT5-i aç və Hesabı bağla düyməsinə bas.')
+            self.status.stopped('Bağlantı faylı hazırdır. MT5 demo hesabını aç və VELA-nı başlat.')
             self.message.set(self.status.message)
         except Exception:
             messagebox.showerror('Fayl seçilmədi', 'Saytdakı Bağlantılar bölməsindən endirdiyin etibarlı VELA JSON faylını seç. Faylın içini dəyişmə.', parent=self.root)
@@ -245,7 +236,7 @@ class Desktop:
     def start(self):
         if self.process is not None:
             return
-        if self.account:
+        if getattr(self, 'account', None):
             try:
                 self.set_account(load_config(CONFIG_PATH))
             except Exception as error:
@@ -255,6 +246,11 @@ class Desktop:
         if not self.account:
             self.choose()
             if not self.account:
+                return
+        if os.name == 'nt':
+            self.agent_mutex = acquire_agent_mutex()
+            if self.agent_mutex is None:
+                self.status.stopped('VELA agenti artıq işləyir. Əvvəl həmin proqramdan dayandır.')
                 return
         # One worker owns all MT5 reads. Stop cooperatively; never terminate MT5.
         self.generation += 1
@@ -287,10 +283,28 @@ class Desktop:
             record_status('ERROR', error)
             self.events.put(('error', generation, classify_error(error)))
         finally:
+            if self.agent_mutex:
+                try:
+                    ctypes.windll.kernel32.CloseHandle(self.agent_mutex)
+                except Exception:
+                    pass
+                self.agent_mutex = None
             self.events.put(('exit', generation, ''))
 
     def stop(self):
         self.stop_demo()
+        if self.process is None:
+            try:
+                runtime = json.loads((ROOT / 'agent-process-status.json').read_text(encoding='utf-8'))
+                pid = runtime.get('pid')
+                if isinstance(pid, int) and pid > 0 and pid != os.getpid():
+                    os.kill(pid, 0)
+                    ROOT.mkdir(parents=True, exist_ok=True)
+                    (ROOT / 'stop.request').write_text('stop', encoding='ascii')
+            except (OSError, ValueError, TypeError):
+                pass
+        if getattr(self, 'account', None):
+            threading.Thread(target=self.halt_remote, args=(dict(self.account),), daemon=True).start()
         if self.process is None:
             return
         self.stopping = True
@@ -299,6 +313,20 @@ class Desktop:
         self.last_clock_ack = None
         self.connect_button.configure(state='disabled')
         self.stop_button.configure(state='disabled')
+
+    def halt_remote(self, config):
+        try:
+            settings_path = ROOT / 'demo-pilot.json'
+            try:
+                settings = json.loads(settings_path.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                settings = {}
+            from demo_bridge import DemoApprovalClient
+            result = DemoApprovalClient(config).halt(settings, 'MANUAL')
+            ok = result.get('ok') is True
+        except Exception:
+            ok = False
+        self.events.put(('remote_stop', self.generation, ok))
 
     def poll(self):
         stop_file=ROOT/'stop.request'
@@ -317,6 +345,8 @@ class Desktop:
             elif kind == 'quit':
                 self.quit()
                 break
+            elif kind == 'remote_stop':
+                self.message.set('Demo sessiyası dayandırıldı. Açıq mövqelər bağlanmadı.' if value else 'Bu kompüterdə yeni girişlər dayandırıldı; sayt stop təsdiqini almadı. İnternet bərpa olunanda saytda Dayandır düyməsinə bas.')
             elif generation == self.generation:
                 if kind == 'ack':
                     if not self.stopping:
@@ -329,7 +359,7 @@ class Desktop:
                     self.process = None
                     if self.stopping:
                         record_status('STOPPED')
-                        self.status.stopped('Bağlantı dayandırılıb. Yenidən başlamaq üçün Hesabı bağla düyməsinə bas.')
+                        self.status.stopped('VELA dayandırıldı. Yenidən başlatmaq üçün Başlat düyməsinə bas.')
                     elif self.status.running:
                         self.status.stopped(ERROR_MESSAGES['UNKNOWN'])
                     self.stopping = False
@@ -458,7 +488,7 @@ def self_test(output):
     assert tls.check_hostname and tls.verify_mode == ssl.CERT_REQUIRED
     ui = Desktop(testing=True)
     ui.root.update_idletasks()
-    assert ui.connect_button.cget('text') == 'Hesabı bağla'
+    assert ui.connect_button.cget('text') == 'VELA-nı başlat'
     assert ui.process is None and not ui.status.connected()
     ui.root.destroy()
     # Exercise native shortcut creation only in a temporary build-test folder.
