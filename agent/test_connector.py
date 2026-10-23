@@ -20,6 +20,50 @@ class ConnectorTests(unittest.TestCase):
         import desktop
         self.assertFalse(desktop.FROZEN)
 
+    def test_stop_ignores_buffered_ack_and_waits_for_worker_exit(self):
+        import desktop
+        import queue
+        from unittest.mock import Mock
+        app = desktop.Desktop.__new__(desktop.Desktop)
+        app.root = Mock()
+        app.events = queue.Queue()
+        app.status = ConnectionStatus()
+        app.status.started()
+        app.status.stopped('Stopping')
+        app.process = object()
+        app.stopping = True
+        app.quitting = False
+        app.generation = 2
+        app.tray = None
+        app.last_clock_ack = None
+        for key in ('connect_button', 'stop_button', 'indicator', 'status_label', 'message', 'time_text'):
+            setattr(app, key, Mock())
+        app.events.put(('ack', 2, ''))
+        app.events.put(('exit', 1, ''))  # an old worker cannot affect the current one
+        app.poll()
+        self.assertFalse(app.status.connected())
+        self.assertIsNotNone(app.process)
+        app.events.put(('exit', 2, ''))
+        app.poll()
+        self.assertIsNone(app.process)
+        self.assertFalse(app.stopping)
+
+    def test_tray_exit_event_completes_quit_instead_of_losing_poll_loop(self):
+        import desktop
+        import queue
+        from unittest.mock import Mock
+        app = desktop.Desktop.__new__(desktop.Desktop)
+        app.root = Mock()
+        app.events = queue.Queue()
+        app.process = None
+        app.quitting = False
+        app.tray = Mock()
+        app.events.put(('quit', 0, ''))
+        app.poll()
+        app.root.destroy.assert_called_once()
+        app.tray.stop.assert_called_once()
+        self.assertTrue(app.quitting)
+
     def test_origin_and_credentials_validated_before_import(self):
         for change in [dict(APP_ORIGIN='https://example.com'), dict(MT5_LOGIN='1&bad'),
                        dict(MT5_TENANT_ID='invalid'), dict(MT5_AGENT_TOKEN='short'),
