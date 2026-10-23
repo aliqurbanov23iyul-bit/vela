@@ -1,0 +1,9 @@
+# Telegram kurulumu ve güvenlik sınırları
+
+TELEGRAM_BOT_TOKEN ve yüksek entropili TELEGRAM_WEBHOOK_SECRET yalnızca sunucuda saklanır. BotFather'da bot oluşturma ve Telegram setWebhook çağrısı kullanıcı/işletim operatörü tarafından yapılır. Webhook URL'si `https://YOUR_ORIGIN/api/telegram/webhook`; secret_token değeri ortam sırrıyla aynı olmalıdır. Gerçek bot, webhook veya mesaj denemesi bu çalışmada yapılmadı.
+
+Uygulamada Telegram onayları → Bağlantı kodu oluştur. Komutu botun özel sohbetine 5 dakika içinde gönderin. Kodun hash'i saklanır ve başarılı kullanımda silinir. Kod kullanıcı ve tenantla bağlıdır; username kullanılmaz. VIEWER pairing üretemez. `/status TENANT_COMPACT` ve `/stop TENANT_COMPACT` komutlarındaki kısa tenant kimliği, üretilen `/start TENANT_COMPACT.CODE` değerinin ilk parçasıdır. Stop için güncel OWNER üyeliği gereklidir. Başka tenant argümanı erişim kazandırmaz; Telegram ID ve aktif üyelik yeniden kontrol edilir.
+
+Webhook secret sabit zamanlı karşılaştırılır. update_id, karar transaction'ında tekilleştirilir. Callback verisi `TENANT_COMPACT.APPROVAL_COMPACT.A` veya `.R` biçimindedir; 64 byte altındadır. Onay kaydı güncel üyelik, kullanıcı, hesap, proposal ID/sürümü, tüketim ve zaman koşullarıyla atomik güncellenir. Callback kaynaklı kararlar emir kuyruğuna aktarılmaz. Onay mesajı üretimi, değişmez proposal yayınlama ve fiyat/risk toleransı sonrası tekrar onay pipeline'ı henüz uygulanmadığından Telegram onaylı ticaret sunulmaz.
+
+Bot yanıtının gönderimi transaction sonrasındadır. Telegram hata verirse karar geri alınmaz, ikinci işlem tetiklenmez; kalıcı notification outbox henüz eksiktir. Kullanıcı arayüzünde kod üretimi bağlantı başarısı olarak gösterilmez. Sağlayıcıya gerçekten mesaj ulaşması ayrıca doğrulanmalıdır. Pozisyon kapatma komutu bulunmaz.

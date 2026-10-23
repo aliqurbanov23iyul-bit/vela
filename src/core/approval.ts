@@ -1,0 +1,2 @@
+export type Approval={tenant:string;user:string;account:string;proposal:string;version:number;expires:number;consumed:boolean};
+export function approvalMatches(a:Approval,expected:Omit<Approval,'expires'|'consumed'>,now=Date.now()){return !a.consumed&&a.expires>now&&a.tenant===expected.tenant&&a.user===expected.user&&a.account===expected.account&&a.proposal===expected.proposal&&a.version===expected.version;}

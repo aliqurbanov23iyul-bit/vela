@@ -1,0 +1,5 @@
+import {Pool} from 'pg';
+import {digest,token} from '../src/server/security';
+import {z} from 'zod';
+const [tenant,account,login,server]=process.argv.slice(2);z.string().uuid().parse(tenant);z.string().uuid().parse(account);if(!login||!server)throw Error('Usage: tenant UUID, account UUID, broker login, server');
+const db=new Pool({connectionString:process.env.MIGRATION_DATABASE_URL});const c=await db.connect();const raw=token();try{await c.query('BEGIN');await c.query("SELECT set_config('app.tenant_id',$1,true)",[tenant]);const r=await c.query('UPDATE accounts SET agent_token_hash=$1,broker_login=$2,server=$3 WHERE id=$4 AND tenant_id=$5',[digest(raw),login,server,account,tenant]);if(r.rowCount!==1)throw Error('Account not found');await c.query("INSERT INTO audit(tenant_id,account_id,event) VALUES($1,$2,'AGENT_TOKEN_ROTATED')",[tenant,account]);await c.query('COMMIT');console.log('Store this once in agent environment:',raw);}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();await db.end();}

@@ -1,0 +1,8 @@
+'use client';
+import {useState} from 'react';
+import Icon, {type IconName} from './Icon';
+type Account={id:string;label:string;currency:string|null;heartbeat:string|null;snapshot:Record<string,unknown>|null};
+export default function AccountMetrics({accounts}:{accounts:Account[]}){const [selected,setSelected]=useState('');const account=accounts.find(a=>a.id===selected)??accounts[0];const fresh=account?.heartbeat&&Date.now()-Date.parse(account.heartbeat)<45000;const snap=fresh?account.snapshot:null;
+return <>{accounts.length>0&&<label className="account-select">Gösterilen hesap <select aria-label="Gösterilen broker hesabı" value={account?.id??''} onChange={e=>setSelected(e.target.value)}>{accounts.map(a=><option key={a.id} value={a.id}>{a.label} · {a.currency??'—'}</option>)}</select><small>Hesaplar farklı para birimleriyle toplanmaz. Son snapshot: {account.heartbeat?new Date(account.heartbeat).toLocaleString('tr-TR',{timeZone:'UTC'})+' UTC':'—'}</small></label>}<div className="metrics">{[['Hesap bakiyesi','balance'],['Equity','equity'],['Kullanılan margin','margin'],['Serbest margin','freeMargin']].map(([label,key],i)=><section className="metric" key={key}><div>{label}<span className="metric-icon"><Icon name={(['wallet','chart','layers','coins'] as IconName[])[i]} size={19}/></span></div><strong>{snap&&typeof snap[key]==='number'?new Intl.NumberFormat('tr-TR',{maximumFractionDigits:2}).format(snap[key] as number):'—'}<small>{account?.currency??'Para birimi bekleniyor'}</small></strong><p>{fresh?'Ajan snapshot verisi':account?.heartbeat?'Veri bayat; değerler gizlendi':'Doğrulanmış broker verisi yok'}</p></section>)}</div></>;
+}
+

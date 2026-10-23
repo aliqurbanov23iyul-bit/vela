@@ -1,0 +1,11 @@
+import {Worker,Queue} from 'bullmq';
+import Redis from 'ioredis';
+import {processEntry} from '../src/server/execution';
+import {z} from 'zod';
+const connection=new Redis(process.env.REDIS_URL!,{maxRetriesPerRequest:null});
+const dead=new Queue('failed-entry',{connection});
+const schema=z.object({tenantId:z.string().uuid(),orderId:z.string().uuid()}).strict();
+const worker=new Worker('entries',async job=>{const b=schema.parse(job.data);return processEntry(b.tenantId,b.orderId);},{connection,concurrency:4});
+worker.on('failed',async job=>{if(job)await dead.add('review',{jobId:job.id},{attempts:1});});
+worker.on('error',()=>console.error('Worker dependency unavailable'));
+for(const sig of ['SIGINT','SIGTERM'])process.on(sig,async()=>{await worker.close();await dead.close();await connection.quit();process.exit(0);});

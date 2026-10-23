@@ -1,0 +1,25 @@
+CREATE TABLE tenants(id uuid PRIMARY KEY, name text NOT NULL, suspended boolean NOT NULL DEFAULT false);
+CREATE TABLE users(id uuid PRIMARY KEY, username text UNIQUE NOT NULL, password_hash text NOT NULL, super_admin boolean NOT NULL DEFAULT false, mfa_secret text, disabled boolean NOT NULL DEFAULT false);
+CREATE TABLE memberships(tenant_id uuid REFERENCES tenants, user_id uuid REFERENCES users, role text NOT NULL CHECK(role IN ('OWNER','OPERATOR','VIEWER')), PRIMARY KEY(tenant_id,user_id));
+CREATE TABLE sessions(token_hash text PRIMARY KEY, user_id uuid REFERENCES users, tenant_id uuid REFERENCES tenants, expires_at timestamptz NOT NULL, reauthenticated_at timestamptz);
+CREATE TABLE reset_tokens(token_hash text PRIMARY KEY, user_id uuid REFERENCES users, expires_at timestamptz NOT NULL);
+CREATE TABLE accounts(id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants, owner_id uuid NOT NULL REFERENCES users, label text NOT NULL, mode text NOT NULL DEFAULT 'WATCH' CHECK(mode IN ('WATCH','TELEGRAM','AUTO')), live_enabled boolean NOT NULL DEFAULT false CHECK(live_enabled = false), stopped boolean NOT NULL DEFAULT true, permission_version integer NOT NULL DEFAULT 1, broker_login text, server text, account_type text, currency text, snapshot jsonb, heartbeat timestamptz, reconciled_at timestamptz, agent_token_hash text, secret_ciphertext text);
+CREATE TABLE proposals(id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants, account_id uuid NOT NULL REFERENCES accounts, version integer NOT NULL, payload jsonb NOT NULL, expires_at timestamptz NOT NULL, UNIQUE(id,version));
+CREATE TABLE approvals(id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants, user_id uuid NOT NULL REFERENCES users, account_id uuid NOT NULL REFERENCES accounts, proposal_id uuid NOT NULL REFERENCES proposals, proposal_version integer NOT NULL, token_hash text UNIQUE NOT NULL, expires_at timestamptz NOT NULL, consumed_at timestamptz, decision text);
+CREATE TABLE orders(id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants, account_id uuid NOT NULL REFERENCES accounts, proposal_id uuid NOT NULL REFERENCES proposals, state text NOT NULL CHECK(state IN ('CREATED','BLOCKED','RESERVED','SUBMITTING','UNKNOWN','FILLED','PARTIAL','REJECTED','RECONCILING')), risk_amount numeric NOT NULL DEFAULT 0, broker_result jsonb, UNIQUE(account_id,proposal_id));
+CREATE TABLE risk_profiles(id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants, account_id uuid UNIQUE NOT NULL REFERENCES accounts, profile jsonb NOT NULL, reviewed_at timestamptz);
+CREATE TABLE telegram_links(id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants, user_id uuid NOT NULL REFERENCES users, code_hash text UNIQUE, expires_at timestamptz, telegram_id text UNIQUE);
+CREATE TABLE telegram_updates(update_id bigint PRIMARY KEY, received_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE audit(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants, actor_id uuid REFERENCES users, account_id uuid, event text NOT NULL, data jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE system_state(id integer PRIMARY KEY CHECK(id=1), stopped boolean NOT NULL DEFAULT true);
+INSERT INTO system_state VALUES(1,true);
+CREATE FUNCTION reject_audit_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit is append only'; END $$;
+CREATE TRIGGER immutable_audit BEFORE UPDATE OR DELETE ON audit FOR EACH ROW EXECUTE FUNCTION reject_audit_mutation();
+DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['accounts','proposals','approvals','orders','risk_profiles','telegram_links','audit','memberships'] LOOP
+EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY',t);
+EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY',t);
+EXECUTE format('CREATE POLICY tenant_scope ON %I USING (tenant_id::text = current_setting(''app.tenant_id'',true)) WITH CHECK (tenant_id::text = current_setting(''app.tenant_id'',true))',t);
+END LOOP; END $$;
+CREATE INDEX account_tenant ON accounts(tenant_id);
+CREATE INDEX order_account ON orders(tenant_id,account_id,state);
+CREATE INDEX audit_tenant ON audit(tenant_id,created_at);
