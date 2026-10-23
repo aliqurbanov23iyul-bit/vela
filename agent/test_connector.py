@@ -16,6 +16,19 @@ def example():
 
 
 class ConnectorTests(unittest.TestCase):
+    def test_runtime_status_contains_only_safe_codes(self):
+        import desktop
+        import requests
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / '.desktop-build') as tmp:
+            with patch.object(desktop, 'ROOT', Path(tmp)):
+                desktop.record_status('ERROR', requests.exceptions.SSLError('CERTIFICATE_VERIFY_FAILED secret_token'))
+                text=(Path(tmp)/'connection-status.json').read_text()
+                data=json.loads(text)
+                self.assertEqual(data['category'], 'CERTIFICATE')
+                self.assertNotIn('secret_token', text)
+                desktop.record_status('CONNECTED')
+                self.assertEqual(json.loads((Path(tmp)/'connection-status.json').read_text())['event'],'CONNECTED')
+
     def test_installer_shortcut_failure_does_not_block_launch(self):
         import desktop
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / '.desktop-build') as tmp:

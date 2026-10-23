@@ -112,6 +112,11 @@ ERROR_MESSAGES = {
     'DEMO': 'Bu versiya yalnız demo hesabı dəstəkləyir. MT5-də demo hesabına keç.',
     'AUTH': 'Bağlantı faylı artıq qəbul edilmir. Saytdan yenisini endirib seç.',
     'NETWORK': 'Sayta məlumat göndərilmədi. İnterneti yoxla və yenidən bağlan.',
+    'CERTIFICATE': 'Windows bu bağlantının sertifikatını təsdiqləyə bilmədi. Xəta kodu: CERTIFICATE.',
+    'SSL': 'Şifrəli sayt bağlantısı qurulmadı. Xəta kodu: SSL.',
+    'TIMEOUT': 'Sayt vaxtında cavab vermədi. Yenidən bağlan. Xəta kodu: TIMEOUT.',
+    'PROXY': 'Windows proxy bağlantısı işləmədi. Xəta kodu: PROXY.',
+    'SERVER': 'Saytda müvəqqəti xəta var. Bir az sonra yenidən bağlan. Xəta kodu: SERVER.',
     'CONFIG': 'Bağlantı faylı oxunmadı. Saytdan endirdiyin JSON faylını yenidən seç.',
     'UNKNOWN': 'Bağlantı dayandı. MT5 və interneti yoxlayıb yenidən bağlan.',
 }
@@ -129,4 +134,21 @@ def classify_error(error):
     response = getattr(error, 'response', None)
     if response is not None and response.status_code in (401, 403):
         return 'AUTH'
+    if response is not None and response.status_code >= 500:
+        return 'SERVER'
+    import requests
+    if isinstance(error, requests.exceptions.SSLError):
+        return 'CERTIFICATE' if 'CERTIFICATE_VERIFY_FAILED' in text else 'SSL'
+    if isinstance(error, requests.exceptions.Timeout):
+        return 'TIMEOUT'
+    if isinstance(error, requests.exceptions.ProxyError):
+        return 'PROXY'
     return 'NETWORK' if error.__class__.__module__.startswith('requests') else 'UNKNOWN'
+
+
+def safe_diagnostic(error):
+    """Only fixed categories, numeric codes and class names; never exception text."""
+    response = getattr(error, 'response', None)
+    return {'category': classify_error(error), 'type': type(error).__name__,
+            'httpStatus': response.status_code if response is not None else None,
+            'winerror': getattr(error, 'winerror', None), 'errno': getattr(error, 'errno', None)}

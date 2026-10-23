@@ -11,13 +11,27 @@ import threading
 import time
 from pathlib import Path
 from connector_core import (ORIGIN, CONFIG_KEYS, read_config, validate_config, save_config,
-                            load_config, ConnectionStatus, ERROR_MESSAGES, classify_error)
+                            load_config, ConnectionStatus, ERROR_MESSAGES, classify_error, safe_diagnostic)
 
 ROOT = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'VELAConnector'
 CONFIG_PATH = ROOT / 'connection.dat'
 INSTALLED = ROOT / 'VELA.exe'
 FROZEN = bool(getattr(sys, 'frozen', False))
 NO_WINDOW = 0x08000000
+VERSION = '1.1.1'
+
+
+def record_status(event, error=None):
+    # Last event only, bounded and credential-free; safe for support to inspect.
+    from datetime import datetime, timezone
+    data = {'version': VERSION, 'event': event, 'at': datetime.now(timezone.utc).isoformat()}
+    if error is not None:
+        data.update(safe_diagnostic(error))
+    try:
+        ROOT.mkdir(parents=True, exist_ok=True)
+        (ROOT / 'connection-status.json').write_text(json.dumps(data), encoding='utf-8')
+    except OSError:
+        pass
 
 
 def startup_enabled():
@@ -114,7 +128,7 @@ class Desktop:
         from tkinter import ttk
         self.tk = tk
         self.root = tk.Tk()
-        self.root.title('VELA · Hesab bağlantısı')
+        self.root.title('VELA · Hesab bağlantısı · ' + VERSION)
         self.root.geometry('620x650')
         self.root.minsize(580, 620)
         self.root.configure(bg='#f3f7ff')
@@ -217,6 +231,13 @@ class Desktop:
     def start(self):
         if self.process is not None:
             return
+        if self.account:
+            try:
+                self.set_account(load_config(CONFIG_PATH))
+            except Exception as error:
+                record_status('CONFIG_ERROR', error)
+                self.status.stopped(ERROR_MESSAGES['CONFIG'])
+                return
         if not self.account:
             self.choose()
             if not self.account:
@@ -228,6 +249,7 @@ class Desktop:
         self.last_clock_ack = None
         self.stop_event = threading.Event()
         self.stopping = False
+        record_status('CONNECTING')
         self.process = threading.Thread(target=self.read_worker, args=(dict(self.account), gen, self.stop_event), daemon=False)
         self.connect_button.configure(state='disabled')
         self.stop_button.configure(state='normal')
@@ -239,8 +261,12 @@ class Desktop:
             for key in CONFIG_KEYS + ('MT5_BROKER_UTC_OFFSET_MINUTES',):
                 os.environ[key] = config[key]
             from main import run
-            run(stop_event=stop_event, on_snapshot=lambda: self.events.put(('ack', generation, '')))
+            def acknowledged():
+                record_status('CONNECTED')
+                self.events.put(('ack', generation, ''))
+            run(stop_event=stop_event, on_snapshot=acknowledged)
         except Exception as error:
+            record_status('ERROR', error)
             self.events.put(('error', generation, classify_error(error)))
         finally:
             self.events.put(('exit', generation, ''))
