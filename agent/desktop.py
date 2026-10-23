@@ -18,7 +18,7 @@ CONFIG_PATH = ROOT / 'connection.dat'
 INSTALLED = ROOT / 'VELA.exe'
 FROZEN = bool(getattr(sys, 'frozen', False))
 NO_WINDOW = 0x08000000
-VERSION = '1.1.1'
+VERSION = '1.1.4'
 
 
 def record_status(event, error=None):
@@ -163,9 +163,9 @@ class Desktop:
             self.message.set(ERROR_MESSAGES['CONFIG'])
         if background and self.tray:
             self.root.withdraw()
-        # Reopening the app does not start a connection unless the user opted into
-        # Windows autostart. An ordinary launch requires the visible connect button.
-        if background and self.account:
+        # Opening VELA reconnects its existing imported account. Windows login
+        # autostart remains a separate, explicit opt-in setting.
+        if self.account:
             self.root.after(500, self.start)
         self.root.after(250, self.poll)
 
@@ -408,11 +408,14 @@ def self_test(output):
     import pystray
     import MetaTrader5
     import requests
+    import ssl
     from PIL import Image
     from connector_core import protect
     probe = b'VELA_BUILD_PROBE'
     assert protect(protect(probe), decrypt=True) == probe
     assert tkinter.Tcl().eval('info patchlevel')
+    tls = ssl.create_default_context(cafile=requests.certs.where())
+    assert tls.check_hostname and tls.verify_mode == ssl.CERT_REQUIRED
     ui = Desktop(testing=True)
     ui.root.update_idletasks()
     assert ui.connect_button.cget('text') == 'Hesabı bağla'

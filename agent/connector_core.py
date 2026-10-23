@@ -149,6 +149,23 @@ def classify_error(error):
 def safe_diagnostic(error):
     """Only fixed categories, numeric codes and class names; never exception text."""
     response = getattr(error, 'response', None)
-    return {'category': classify_error(error), 'type': type(error).__name__,
+    causes = []
+    pending = [error]
+    seen = set()
+    while pending and len(causes) < 8:
+        item = pending.pop(0)
+        if not isinstance(item, BaseException) or id(item) in seen:
+            continue
+        seen.add(id(item))
+        codes = [int(n) for n in re.findall(r'(?:WinError|Errno)\s+(-?\d+)', str(item))][:3]
+        import traceback
+        frames = [{'file': Path(f.filename).name, 'function': f.name, 'line': f.lineno}
+                  for f in traceback.extract_tb(item.__traceback__)[-6:]]
+        filename = getattr(item, 'filename', None)
+        causes.append({'type': type(item).__name__, 'codes': codes, 'frames': frames,
+                       'missingFile': Path(filename).name if isinstance(filename, str) else None})
+        pending.extend([getattr(item, '__cause__', None), getattr(item, '__context__', None), getattr(item, 'reason', None)])
+        pending.extend(a for a in item.args if isinstance(a, BaseException))
+    return {'category': classify_error(error), 'type': type(error).__name__, 'causes': causes,
             'httpStatus': response.status_code if response is not None else None,
             'winerror': getattr(error, 'winerror', None), 'errno': getattr(error, 'errno', None)}
