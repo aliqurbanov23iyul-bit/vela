@@ -1,9 +1,15 @@
-# Telegram kurulumu ve güvenlik sınırları
+# Telegram bağlantısı və qərarlar
 
-TELEGRAM_BOT_TOKEN ve yüksek entropili TELEGRAM_WEBHOOK_SECRET yalnızca sunucuda saklanır. BotFather'da bot oluşturma ve Telegram setWebhook çağrısı kullanıcı/işletim operatörü tarafından yapılır. Webhook URL'si `https://YOUR_ORIGIN/api/telegram/webhook`; secret_token değeri ortam sırrıyla aynı olmalıdır. Gerçek bot, webhook veya mesaj denemesi bu çalışmada yapılmadı.
+Vercel Production dəyişənləri: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` (təsadüfi, yalnız A–Z/a–z/0–9/_/-, maksimum 256 simvol) və `APP_ORIGIN=https://velatradingbot.vercel.app`.
 
-Uygulamada Telegram onayları → Bağlantı kodu oluştur. Komutu botun özel sohbetine 5 dakika içinde gönderin. Kodun hash'i saklanır ve başarılı kullanımda silinir. Kod kullanıcı ve tenantla bağlıdır; username kullanılmaz. VIEWER pairing üretemez. `/status TENANT_COMPACT` ve `/stop TENANT_COMPACT` komutlarındaki kısa tenant kimliği, üretilen `/start TENANT_COMPACT.CODE` değerinin ilk parçasıdır. Stop için güncel OWNER üyeliği gereklidir. Başka tenant argümanı erişim kazandırmaz; Telegram ID ve aktif üyelik yeniden kontrol edilir.
+Admin daxil olub Telegram bölməsində **Bot bağlantısını qur** seçir. Bu, Telegram `setWebhook` çağırışında `/api/telegram/webhook` HTTPS ünvanını və gizli header kodunu qeydiyyata alır. Bot tokenı brauzerə verilmir. Bunu hər müştəri üçün təkrarlamaq lazım deyil; bot bütün tenantlar üçün ortaqdır.
 
-Webhook secret sabit zamanlı karşılaştırılır. update_id, karar transaction'ında tekilleştirilir. Callback verisi `TENANT_COMPACT.APPROVAL_COMPACT.A` veya `.R` biçimindedir; 64 byte altındadır. Onay kaydı güncel üyelik, kullanıcı, hesap, proposal ID/sürümü, tüketim ve zaman koşullarıyla atomik güncellenir. Callback kaynaklı kararlar emir kuyruğuna aktarılmaz. Onay mesajı üretimi, değişmez proposal yayınlama ve fiyat/risk toleransı sonrası tekrar onay pipeline'ı henüz uygulanmadığından Telegram onaylı ticaret sunulmaz.
+İstifadəçi **Bağlantı kodu yarat** seçir, 5 dəqiqəlik `/start tenant.code` əmrini botun xüsusi söhbətinə göndərir. Bot ✅ təsdiq, username və vəziyyət düyməsi göndərir. Sayt həm Telegram bölməsində, həm ümumi baxışda verilənlər bazasındakı təsdiqlənmiş bağlantını göstərir və görünən səhifədə hər 5 saniyədə yoxlayır. Status botun bloklanmadığına və ya brokerin online olduğuna zəmanət deyil.
 
-Bot yanıtının gönderimi transaction sonrasındadır. Telegram hata verirse karar geri alınmaz, ikinci işlem tetiklenmez; kalıcı notification outbox henüz eksiktir. Kullanıcı arayüzünde kod üretimi bağlantı başarısı olarak gösterilmez. Sağlayıcıya gerçekten mesaj ulaşması ayrıca doğrulanmalıdır. Pozisyon kapatma komutu bulunmaz.
+Telegram bölməsində mövcud, vaxtı bitməmiş proposal-lar **Telegram-a göndər** ilə göndərilir. API yalnız mövcud tenant proposal-ını qəbul edir; istifadəçi mesajdan qiymət və ya həcm dəyişdirə bilməz. İstifadəçiyə məxsus approval yaradılır; mesajda hesab, simvol, istiqamət, giriş/SL/TP/həcm, UTC son vaxtı və ✅/❌ düymələri var. Qərar atomik bir dəfə qəbul edilir. Köhnə/başqa tenant/başqa user callback-ləri rədd edilir. Qərardan sonra söhbətə nəticə göndərilir, köhnə düymələr silinir, sayt son qərarları yeniləyir.
+
+Webhook cavabı audit ilə eyni transaction-da saxlanır. Telegram-a çatdırılma alınmazsa HTTP 503 ilə retry istənir; təkrar update qərarı yenidən tətbiq etmir. Çatdırılma ilə audit işarələnməsi arasında şəbəkə xətası eyni mesajı təkrar göstərə bilər (Telegram sendMessage idempotency açarı təqdim etmir), amma qərarı və ya əmri təkrar icra etmir. Təklifin manual göndərilməsi də uğursuz şəbəkə nəticəsində eyni approval düymələri ilə təkrarlana bilər.
+
+Bu dəyişiklik AI proposal generatorunu və avtomatik proposal bildiriş worker-ini yaratmır. Hazırkı tətbiqdə canlı order icrası bağlıdır: təsdiq yalnız qərarı saxlayır. Bot mesajları broker əməliyyatının icrasını iddia etmir. Həqiqi bot tokenı/webhook hesabı olmadan end-to-end çatdırılma təsdiqlənməyib.
+
+Bot API mənbəyi: https://core.telegram.org/bots/api
