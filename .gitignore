@@ -6,5 +6,6 @@ node_modules/
 __pycache__/
 .venv/
 .install-tmp/
+.logs/
 vela-connection*.json
 *.sqlite*
