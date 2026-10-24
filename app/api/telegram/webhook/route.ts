@@ -1,15 +1,19 @@
 import {NextResponse} from 'next/server';
-import {tenantTx} from '../../../../src/server/db';
+import {pool,tenantTx} from '../../../../src/server/db';
 import {equal} from '../../../../src/server/security';
 import {telegram} from '../../../../src/server/telegram';
-import {telegramUpdate,telegramContext,processTelegramUpdate} from '../../../../src/server/telegram-update';
+import {telegramUpdate,telegramContext,processTelegramUpdate,processTelegramCommand} from '../../../../src/server/telegram-update';
 export async function POST(req:Request){
  const secret=process.env.TELEGRAM_WEBHOOK_SECRET;if(!secret||!equal(req.headers.get('x-telegram-bot-api-secret-token')??'',secret))return NextResponse.json({error:'Forbidden'},{status:403});
  const parsed=telegramUpdate.safeParse(await req.json().catch(()=>null));if(!parsed.success)return NextResponse.json({ok:true});const u=parsed.data;
  const c=telegramContext(u);
  if(!c){
   if(u.callback_query){await telegram('answerCallbackQuery',{callback_query_id:u.callback_query.id,text:'VELA yalnız xəbər və bazar məlumatı paylaşır.'}).catch(()=>{});await telegram('editMessageReplyMarkup',{chat_id:u.callback_query.message?.chat.id,message_id:u.callback_query.message?.message_id,reply_markup:{inline_keyboard:[]}}).catch(()=>{});}
-  else if(u.message?.chat.type==='private'&&!u.message.from.is_bot){await telegram('sendMessage',{chat_id:u.message.chat.id,text:'👋 <b>VELA-ya xoş gəldiniz!</b>\n\n🔗 Saytda Telegram bölməsindən qısa müddətli kod yaradın, sonra onu /start keçidi ilə açın.\n\nℹ️ VELA xəbər və bazar baxışı göstərir. Ticarət əmri göndərilmir.',parse_mode:'HTML'}).catch(()=>{});}
+  else if(u.message?.chat.type==='private'&&!u.message.from.is_bot){
+   const match=u.message.text.trim().match(/^\/(start|status|settings|pause|resume|unlink)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i);
+   if(match){const resolved=await pool.query('SELECT tenant_id,user_id FROM public.resolve_telegram_chat($1)',[String(u.message.chat.id)]);if(resolved.rowCount){const owner=resolved.rows[0];try{const text=await tenantTx(owner.tenant_id,db=>processTelegramCommand(db,u,owner.tenant_id,owner.user_id));if(text)await telegram('sendMessage',{chat_id:u.message.chat.id,text,parse_mode:'HTML'});return NextResponse.json({ok:true});}catch{return NextResponse.json({error:'Temporarily unavailable'},{status:503});}}}
+   await telegram('sendMessage',{chat_id:u.message.chat.id,text:'👋 <b>VELA-ya xoş gəldiniz!</b>\n\n🔗 Saytda Telegram bölməsindən qısa müddətli kod yaradın, sonra onu /start keçidi ilə açın.\n\nℹ️ VELA xəbər və bazar baxışı göstərir. Ticarət əmri göndərilmir.',parse_mode:'HTML'}).catch(()=>{});
+  }
   return NextResponse.json({ok:true});
  }
  try{const reply=await tenantTx(c.tenant,db=>processTelegramUpdate(db,u,c));if(reply)await telegram('sendMessage',reply);return NextResponse.json({ok:true});}
