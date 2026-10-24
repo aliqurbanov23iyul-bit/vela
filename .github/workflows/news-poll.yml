@@ -15,15 +15,13 @@ jobs:
     steps:
       - name: Poll the VELA news pipeline
         env:
-          VELA_URL: ${{ vars.VELA_PRODUCTION_URL }}
+          VELA_URL: https://velatradingbot.vercel.app
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -eu
-          test -n "$VELA_URL" || { echo "Missing repository variable VELA_PRODUCTION_URL"; exit 1; }
           test -n "$CRON_SECRET" || { echo "Missing repository secret CRON_SECRET"; exit 1; }
           curl --fail-with-body --silent --show-error --max-time 90 \
             -X POST "${VELA_URL%/}/api/cron/news" \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "Content-Type: application/json" \
             -d '{}'
-
