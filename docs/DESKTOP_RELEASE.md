@@ -6,6 +6,8 @@ Open MetaTrader 5 and sign into your DEMO account. In VELA, select your private 
 
 Choose “VELA-nı dayandır” to block new entries, stop the local connector, and request a stop for the website demo session. Open MT5 positions are not closed. Closing the window keeps VELA in the system tray; right-click its icon and choose “Çıxış” after stopping. MT5 itself is not terminated.
 
+The website's “Sürətli TEST” mode requires connector version 1.4.4 or later. It uses closed one-minute candles, sends each proposed demo entry to Telegram for approval, and requests an automatic close after 60 seconds. If the market data is stale, the quote is unavailable, or the session is stopped, it will not open a new entry. Existing demo risk and one-position safeguards remain enabled.
+
 Your imported credential is stored with Windows current-user DPAPI encryption. Never share the original JSON, which remains in Downloads until you remove it yourself. No personal config or keys are included in this installer.
 
 This build is unsigned. Windows may display an unknown-publisher warning; there is no certificate or SmartScreen reputation yet. SHA256SUMS.txt identifies the exact release build. Keep the computer, MT5 and VELA running while you want the connector online.

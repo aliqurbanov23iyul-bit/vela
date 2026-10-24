@@ -83,8 +83,8 @@ def run(stop_event=None, on_snapshot=None, demo_pilot=None):
                     except Exception:
                         pass
             if demo_pilot is not None:
-                payload['connectorVersion']='1.4.3'
-                payload['demoProtocol']=2
+                payload['connectorVersion']='1.4.4'
+                payload['demoProtocol']=3
                 payload['demoPilot']=dict(demo_pilot.status)
                 if time.monotonic()>=next_history:
                     from demo_bridge import collect_deals

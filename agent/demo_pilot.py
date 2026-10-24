@@ -38,6 +38,7 @@ REASONS = {
  'LIMIT':'Seçilmiş əməliyyat sayı tamamlandı. Yenidən başlatmaq üçün saytdan Başlat seç.', 'LIMIT_WAIT':'Seçilmiş sayda mövqe açılıb. Son bağlanmanın təsdiqi gözlənilir.', 'COOLDOWN':'Seçilmiş giriş tezliyinə görə fasilə gözlənilir.',
  'WAITING':'Təzə AI yönü və uyğun EMA/RSI siqnalı gözlənilir.',
  'UNKNOWN':'Əmrin nəticəsi qeyri-müəyyəndir. Yeni girişlər bloklandı; MT5 tarixçəsini yoxla.',
+ 'QUICK_HOLD':'Sürətli demo mövqeyi 60 saniyə tamamlanana qədər izlənir.', 'CLOSED':'Sürətli demo mövqeyi 60 saniyədən sonra bağlandı.',
  'FILLED':'Demo əməliyyatı broker tərəfindən təsdiqləndi. SL və TP göndərilib.',
  'REJECTED':'Broker əmri qəbul etmədi. Eyni siqnal təkrar göndərilmir.',
  'DATA':'Güncəl qiymət, tam məlumat və uyğun spred gözlənilir.',
@@ -94,11 +95,13 @@ def technical_signal(packet, now):
     return (direction,atr) if direction else None
 
 def random_test_signal(packet, now):
-    """Random direction for demo testing, using fresh candles only for sizing."""
-    bars=packet.get('m5',[])
+    """Random TEST direction, sized from the latest closed M1 or M5 candles."""
+    quick=packet.get('_quickMode') is True
+    bars=packet.get('m1' if quick else 'm5',[])
     if len(bars)<20:return None
     if any(not all(isinstance(b.get(k),(int,float)) and math.isfinite(b[k]) and b[k]>0 for k in ('open','close','high','low','time')) or b['high']<max(b['open'],b['close']) or b['low']>min(b['open'],b['close']) for b in bars):return None
-    if any(b['time']<=a['time'] for a,b in zip(bars,bars[1:])) or not 300<=now-bars[-1]['time']/1000<=620:return None
+    interval=60 if quick else 300
+    if any(b['time']<=a['time'] for a,b in zip(bars,bars[1:])) or not interval<=now-bars[-1]['time']/1000<=(125 if quick else 620):return None
     ranges=[max(b['high']-b['low'],abs(b['high']-a['close']),abs(b['low']-a['close'])) for a,b in zip(bars,bars[1:])]
     atr=sum(ranges[-14:])/14
     return (secrets.choice(('BUY','SELL')),atr) if math.isfinite(atr) and atr>0 else None
@@ -187,7 +190,7 @@ class DemoPilot:
         UUID(run['sessionId'])
         start=epoch(run.get('startedAt'));end=epoch(run.get('expiresAt')) if run.get('expiresAt') is not None else None
         limit=run.get('tradeLimit');frequency=run.get('frequency','SIGNAL')
-        if run.get('mode') not in ('AUTO','TELEGRAM') or (run.get('testMode') is True and run.get('mode')!='TELEGRAM') or frequency not in ('SIGNAL','HOURLY') or start>self.clock()+5 or (end is not None and (not 0<end-start<=86400 or end<=self.clock())) or (limit is not None and (type(limit) is not int or not 1<=limit<=1000000)):
+        if run.get('mode') not in ('AUTO','TELEGRAM') or (run.get('testMode') is True and run.get('mode')!='TELEGRAM') or frequency not in ('SIGNAL','HOURLY','QUICK') or (frequency=='QUICK' and (run.get('testMode') is not True or run.get('mode')!='TELEGRAM')) or start>self.clock()+5 or (end is not None and (not 0<end-start<=86400 or end<=self.clock())) or (limit is not None and (type(limit) is not int or not 1<=limit<=1000000)):
             disarm(self.root);return
         progress=dict(completedTrades=run.get('completedTrades',0),openedTrades=run.get('openedTrades',0),tradeLimit=limit,frequency=frequency)
         with SETTINGS_LOCK:
@@ -241,11 +244,18 @@ class DemoPilot:
             attempts,last,filled=db.execute("SELECT count(*),max(at),sum(CASE WHEN state='FILLED' THEN 1 ELSE 0 END) FROM attempts WHERE session=?",(s['sessionId'],)).fetchone()
         self.status['attempts']=attempts
         opened=max(filled or 0,s.get('openedTrades',0));self.status['openedTrades']=opened
-        if s.get('tradeLimit') is not None and opened>=s['tradeLimit']:return self.report('LIMIT_WAIT')
         positions=api.positions_get();orders=api.orders_get()
         if positions is None or orders is None:return self.report('DATA')
+        if s.get('frequency')=='QUICK':
+            owned=[p for p in positions if p.magic==MAGIC and p.comment=='VELA-DEMO-'+s['sessionId'][:8]]
+            if owned:
+                position=owned[0]
+                opened_at=position.time-int(self.config['MT5_BROKER_UTC_OFFSET_MINUTES'])*60
+                if now-opened_at>=60:return self.close_quick(s,position,stop_event)
+                return self.report('QUICK_HOLD',diagnostic='Sürətli demo mövqeyi 60 saniyəlik çıxış vaxtını gözləyir.')
+        if s.get('tradeLimit') is not None and opened>=s['tradeLimit']:return self.report('LIMIT_WAIT')
         if positions or orders:return self.report('POSITION_EXISTS',diagnostic='Hesabda açıq mövqe və ya gözləyən əmr var. Bot eyni anda yalnız bir mövqeyə icazə verir.')
-        if last is not None and now-last<(3600 if s.get('frequency')=='HOURLY' else 1800):return self.report('COOLDOWN',diagnostic='Əvvəlki girişdən sonrakı təhlükəsizlik fasiləsi hələ bitməyib.')
+        if last is not None and now-last<(3600 if s.get('frequency')=='HOURLY' else 60 if s.get('frequency')=='QUICK' else 1800):return self.report('COOLDOWN',diagnostic='Əvvəlki girişdən sonrakı təhlükəsizlik fasiləsi hələ bitməyib.')
         checks=[]
         for symbol in ('EURUSD','XAUUSD'):
             entry=observations.get(symbol)
@@ -257,9 +267,10 @@ class DemoPilot:
                 checks.append(symbol+': qiymət və ya şam məlumatı köhnə/natamamdır ('+', '.join(response.get('dataIssues') or ['yoxlanmadı'])+').')
                 continue
             if s.get('testMode'):
+                packet['_quickMode']=s.get('frequency')=='QUICK'
                 signal=random_test_signal(packet,now)
                 if not signal:
-                    checks.append(symbol+': test üçün təzə M5 şamları gözlənilir.')
+                    checks.append(symbol+(': sürətli test üçün təzə M1 şamları gözlənilir.' if s.get('frequency')=='QUICK' else ': test üçün təzə M5 şamları gözlənilir.'))
                     continue
                 result=self.submit(s,account,packet,signal,stop_event)
                 if result:return result
@@ -293,6 +304,30 @@ class DemoPilot:
             if result:return result
             checks.append(symbol+': bu şam üçün əməliyyat artıq yoxlanıb; növbəti şam gözlənilir.')
         return self.report('WAITING',diagnostic=' '.join(checks)[:500] or 'Təzə bazar məlumatı və uyğun siqnal gözlənilir.')
+
+    def close_quick(self,s,position,stop_event):
+        api=self.api;tick=api.symbol_info_tick(position.symbol);info=api.symbol_info(position.symbol)
+        account=api.account_info();terminal=api.terminal_info();now=self.clock()
+        if not tick or not info or tick.bid<=0 or tick.ask<tick.bid:return self.report('DATA',diagnostic='Sürətli çıxış üçün təzə qiymət alınmadı; SL/TP qüvvədə qalır.')
+        if not self.identity(account) or not terminal or not terminal.connected or not terminal.trade_allowed or terminal.tradeapi_disabled or not account.trade_allowed or not account.trade_expert:return self.report('ALGO_OFF')
+        if stop_event and stop_event.is_set():return self.report('OFF',enabled=False)
+        quote=(getattr(tick,'time_msc',0) or tick.time*1000)/1000-int(self.config['MT5_BROKER_UTC_OFFSET_MINUTES'])*60
+        if not -5<=now-quote<=15:return self.report('DATA',diagnostic='Sürətli çıxış üçün MT5 qiyməti köhnədir; SL/TP qüvvədə qalır.')
+        close_type=api.ORDER_TYPE_SELL if position.type==api.POSITION_TYPE_BUY else api.ORDER_TYPE_BUY
+        price=tick.bid if close_type==api.ORDER_TYPE_SELL else tick.ask
+        if info.filling_mode&2:filling=api.ORDER_FILLING_IOC
+        elif info.filling_mode&1:filling=api.ORDER_FILLING_FOK
+        elif info.trade_exemode!=api.SYMBOL_TRADE_EXECUTION_MARKET:filling=api.ORDER_FILLING_RETURN
+        else:return self.report('DATA',diagnostic='Broker sürətli çıxış üçün icra növü vermədi; SL/TP qüvvədə qalır.')
+        request=dict(action=api.TRADE_ACTION_DEAL,symbol=position.symbol,volume=position.volume,type=close_type,position=position.ticket,price=price,deviation=10,magic=MAGIC,comment='VELA-EXIT-'+s['sessionId'][:8],type_time=api.ORDER_TIME_GTC,type_filling=filling)
+        try:check=api.order_check(request)
+        except Exception:check=None
+        current=self.settings()
+        if check is None or check.retcode!=0 or not current or current.get('sessionId')!=s['sessionId'] or expired(current,now) or (stop_event and stop_event.is_set()):return self.report('DATA',diagnostic='Broker sürətli çıxış sifarişini yoxlamadı; SL/TP qüvvədə qalır.')
+        try:result=api.order_send(request)
+        except Exception:result=None
+        if result is not None and result.retcode in (api.TRADE_RETCODE_DONE,api.TRADE_RETCODE_DONE_PARTIAL):return self.report('CLOSED',diagnostic='Sürətli demo mövqeyi 60 saniyədən sonra bağlandı.')
+        return self.report('UNKNOWN',diagnostic='Sürətli çıxış cavabı qeyri-müəyyəndir; MT5-də mövqeni yoxla. Yeni giriş açılmayacaq.')
 
     def submit(self,s,account,packet,signal,stop_event):
         api=self.api;now=self.clock();direction,atr=signal;symbol=packet['brokerSymbol'];base=packet['symbol']
@@ -358,7 +393,8 @@ class DemoPilot:
         if not current or current['sessionId']!=s['sessionId'] or expired(current,self.clock()) or (stop_event and stop_event.is_set()):return self.report('OFF',enabled=False)
         if not self.identity(api.account_info()):return self.report('REAL_BLOCKED')
         if api.positions_get()!=() or api.orders_get()!=():return self.report('POSITION_EXISTS')
-        key=account+':'+base+':'+str(packet['m5'][-1]['time'])+':'+direction
+        bar_frame='m1' if s.get('frequency')=='QUICK' else 'm5'
+        key=account+':'+base+':'+str(packet[bar_frame][-1]['time'])+':'+direction
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             if db.execute('SELECT 1 FROM attempts WHERE k=?',(key,)).fetchone():return None

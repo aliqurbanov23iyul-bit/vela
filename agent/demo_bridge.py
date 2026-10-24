@@ -18,9 +18,10 @@ class DemoApprovalClient:
         return data
 
     def prepare(self,settings,packet,request,planned_risk_money=None):
+        frame='m1' if settings.get('frequency')=='QUICK' else 'm5'
         return self.post({'operation':'prepare','sessionId':settings['sessionId'],
                           'symbol':packet['symbol'],'testMode':settings.get('testMode',False),
-                          'barAt':datetime.fromtimestamp(packet['m5'][-1]['time']/1000,timezone.utc).isoformat().replace('+00:00','Z'),
+                          'barAt':datetime.fromtimestamp(packet[frame][-1]['time']/1000,timezone.utc).isoformat().replace('+00:00','Z'),
                           'request':request,'plannedRiskMoney':planned_risk_money})
 
     def claim(self,settings,candidate):

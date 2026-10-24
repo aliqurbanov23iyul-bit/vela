@@ -19,9 +19,9 @@ def collect_market(base, broker_utc_offset_minutes=0):
     # offset, never shift a quote to "now" (which would hide a stale feed).
     offset_ms = broker_utc_offset_minutes * 60000
     frames = {}
-    for name, timeframe in [('m5', mt5.TIMEFRAME_M5), ('h1', mt5.TIMEFRAME_H1)]:
+    for name, timeframe, minimum in [('m1', mt5.TIMEFRAME_M1, 30), ('m5', mt5.TIMEFRAME_M5, 220), ('h1', mt5.TIMEFRAME_H1, 220)]:
         rates = mt5.copy_rates_from_pos(symbol, timeframe, 1, 260)
-        if rates is None or len(rates) < 220:
+        if rates is None or len(rates) < minimum:
             raise RuntimeError('Closed candle history is not ready')
         frames[name] = [dict(time=int(b['time']) * 1000 - offset_ms, open=float(b['open']),
                              high=float(b['high']), low=float(b['low']), close=float(b['close'])) for b in rates]
