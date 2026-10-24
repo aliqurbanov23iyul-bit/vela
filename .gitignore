@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.next-build-check/
 .env
 .env.local
 *.tsbuildinfo
@@ -11,3 +12,4 @@ vela-connection*.json
 *.sqlite*
 .desktop-build/
 desktop-dist/
+

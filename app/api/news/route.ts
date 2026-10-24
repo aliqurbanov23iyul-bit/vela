@@ -1,5 +1,8 @@
 import {NextResponse} from 'next/server';
-import {getNewsContext} from '../../../src/server/public-news';
-export const maxDuration=20;
-// Only public publisher headlines and health metadata. No tenant data or AI results.
-export async function GET(){try{return NextResponse.json(await getNewsContext(),{headers:{'Cache-Control':'no-store'}});}catch{return NextResponse.json({error:'Xəbər mənbələrinin vəziyyəti oxunmadı.'},{status:503});}}
+const disabled=()=>NextResponse.json({error:'Bu VELA buraxılışında broker və ticarət idarəetməsi söndürülüb.'},{status:410,headers:{'Cache-Control':'no-store'}});
+export async function GET(){return disabled();}
+export async function POST(){return disabled();}
+export async function PUT(){return disabled();}
+export async function PATCH(){return disabled();}
+export async function DELETE(){return disabled();}
+

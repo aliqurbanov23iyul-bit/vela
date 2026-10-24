@@ -1,31 +1,50 @@
 import type {PoolClient} from 'pg';
 import {z} from 'zod';
 import {digest} from './security';
-import {compact,expand,connectionKeyboard} from './telegram';
+import {expand} from './telegram';
 const person=z.object({id:z.number().int(),is_bot:z.boolean()});
 export const telegramUpdate=z.object({update_id:z.number().int(),message:z.object({from:person,chat:z.object({id:z.number().int(),type:z.string()}),text:z.string()}).optional(),callback_query:z.object({id:z.string(),from:person,data:z.string(),message:z.object({message_id:z.number().int(),chat:z.object({id:z.number().int(),type:z.string()})}).optional()}).optional()});
 export type TelegramUpdate=z.infer<typeof telegramUpdate>;
 export function telegramContext(u:TelegramUpdate){
- const cb=u.callback_query,m=u.message;
- if(cb){if(cb.from.is_bot||cb.message?.chat.type!=='private'||cb.message.chat.id!==cb.from.id)throw Error('INVALID');const p=cb.data.split('.');if(p.length===2&&p[1]==='S')return {tenant:expand(p[0]),command:'/status',telegramId:String(cb.from.id)};if(p.length!==3||!['A','R'].includes(p[2]))throw Error('INVALID');return {tenant:expand(p[0]),command:'callback',approvalId:expand(p[1]),decision:p[2]==='A'?'APPROVED':'REJECTED',telegramId:String(cb.from.id)};}
- if(!m||m.from.is_bot||m.chat.type!=='private'||m.chat.id!==m.from.id)throw Error('INVALID');const [cmd,arg]=m.text.trim().split(/\s+/);const command=cmd.split('@')[0];if(!['/start','/status','/stop'].includes(command)||!arg)throw Error('HELP');const p=command==='/start'&&/^[A-Za-z0-9_-]{44}$/.test(arg)?[arg.slice(0,22),arg.slice(22)]:arg.split('.');return {tenant:expand(p[0]),command,code:p[1],telegramId:String(m.from.id)};
-}
-export async function processTelegramUpdate(db:PoolClient,u:TelegramUpdate,c:ReturnType<typeof telegramContext>){
- const inserted=await db.query('INSERT INTO telegram_updates(update_id) VALUES($1) ON CONFLICT DO NOTHING RETURNING update_id',[u.update_id]);
- if(!inserted.rowCount){const queued=await db.query("SELECT data FROM audit WHERE event='TELEGRAM_REPLY_QUEUED' AND data->>'updateId'=$1 ORDER BY id DESC LIMIT 1",[String(u.update_id)]);const delivered=await db.query("SELECT 1 FROM audit WHERE event='TELEGRAM_REPLY_DELIVERED' AND data->>'updateId'=$1 LIMIT 1",[String(u.update_id)]);return delivered.rowCount?null:queued.rows[0]?.data.reply??null;}
- let text:string;let actor:string;let keyboard:unknown=connectionKeyboard(c.tenant);
- if(c.command==='/start'){
-  if(!c.code)throw Error('PAIRING_REJECTED');const link=await db.query('SELECT l.id,l.user_id,u.username FROM telegram_links l JOIN users u ON u.id=l.user_id JOIN tenants t ON t.id=l.tenant_id JOIN memberships m ON m.user_id=l.user_id AND m.tenant_id=l.tenant_id WHERE l.code_hash=$1 AND l.expires_at>now() AND l.telegram_id IS NULL AND NOT u.disabled AND NOT t.suspended FOR UPDATE OF l',[digest(c.code)]);if(link.rowCount!==1)throw Error('PAIRING_REJECTED');actor=link.rows[0].user_id;
-  await db.query('DELETE FROM telegram_links WHERE user_id=$1 AND telegram_id IS NOT NULL',[actor]);await db.query('UPDATE telegram_links SET telegram_id=$1,code_hash=NULL,expires_at=NULL WHERE id=$2',[c.telegramId,link.rows[0].id]);await db.query("INSERT INTO audit(tenant_id,actor_id,event) VALUES($1,$2,'TELEGRAM_LINKED')",[c.tenant,actor]);
-  text=`✅ VELA hesabınıza bağlandı!\n\n👤 İstifadəçi: ${link.rows[0].username}\n🔔 Əməliyyat təklifləri və qərar bildirişləri bu söhbətdə görünəcək.\n🌐 Saytda Telegram bölməsi avtomatik yenilənir.\n\n🔒 Canlı emir icrası bağlıdır.`;
- }else{
-  const links=await db.query('SELECT l.user_id,m.role,u.username FROM telegram_links l JOIN memberships m ON m.user_id=l.user_id AND m.tenant_id=l.tenant_id JOIN users u ON u.id=l.user_id JOIN tenants t ON t.id=l.tenant_id WHERE l.telegram_id=$1 AND NOT u.disabled AND NOT t.suspended',[c.telegramId]);if(links.rowCount!==1)throw Error('UNAUTHORIZED');const link=links.rows[0];actor=link.user_id;
-  if(c.command==='/status')text=`🟢 VELA hesabınız bağlıdır\n\n👤 İstifadəçi: ${link.username}\n🔔 Telegram bildirişləri aktivdir.\n🔒 Canlı emir icrası bağlıdır.\n\n🛑 Yeni girişləri dayandırmaq: /stop ${compact(c.tenant)}`;
-  else if(c.command==='/stop'){
-   if(link.role!=='OWNER')throw Error('FORBIDDEN');await db.query('UPDATE accounts SET stopped=true,permission_version=permission_version+1 WHERE tenant_id=$1',[c.tenant]);await db.query("UPDATE orders SET state='BLOCKED' WHERE tenant_id=$1 AND state IN ('CREATED','RESERVED')",[c.tenant]);await db.query("INSERT INTO audit(tenant_id,actor_id,event) VALUES($1,$2,'TELEGRAM_TENANT_STOP')",[c.tenant,actor]);text='🛑 Yeni girişlər dayandırıldı.\n\nAçıq pozisiyalar bağlanmadı.';
-  }else{
-   if(!['OWNER','OPERATOR'].includes(link.role))throw Error('FORBIDDEN');const a=await db.query("UPDATE approvals a SET consumed_at=now(),decision=$1 FROM proposals p WHERE a.id=$2 AND a.user_id=$3 AND a.consumed_at IS NULL AND a.expires_at>now() AND p.id=a.proposal_id AND p.account_id=a.account_id AND p.version=a.proposal_version AND p.expires_at>now() AND p.tenant_id=a.tenant_id AND (p.payload->>'demo' IS DISTINCT FROM 'true' OR EXISTS(SELECT 1 FROM demo_candidates c JOIN demo_control d ON d.account_id=c.account_id JOIN accounts acc ON acc.id=c.account_id WHERE c.id=p.id AND c.session_id=d.session_id AND d.enabled AND (d.expires_at IS NULL OR d.expires_at>now()) AND c.mode='TELEGRAM' AND d.mode='TELEGRAM' AND d.permission_version=acc.permission_version AND a.proposal_version=acc.permission_version)) RETURNING a.account_id,p.payload",[c.decision,c.approvalId,actor]);if(a.rowCount!==1)throw Error('EXPIRED_OR_CONSUMED');await db.query('INSERT INTO audit(tenant_id,actor_id,account_id,event) VALUES($1,$2,$3,$4)',[c.tenant,actor,a.rows[0].account_id,'TELEGRAM_'+c.decision]);const payload=a.rows[0].payload;text=c.decision==='APPROVED'&&payload?.demo?payload.testMode?'🧪 TEST əməliyyatı təsdiqləndi.\n\n🤖 Bot cari qiymət və risk şərtlərini yenidən yoxlayacaq. Əmr açılsa, saytda görünəcək.\n🔒 Yalnız demo hesabı.':'✅ Demo təklifi təsdiqləndi.\n\n🤖 Bot cari qiymət, risk və siqnalı yenidən yoxlayacaq. Əmr açılarsa saytda görünəcək.\n🔒 Real ticarət bağlıdır.':c.decision==='APPROVED'?'✅ Təklif təsdiqləndi.\n\n📝 Qərarınız qeydə alındı.\n🔒 Canlı emir göndərilmədi.':'❌ Təklif rədd edildi.\n\n📝 Qərarınız qeydə alındı. Emir göndərilmədi.';keyboard=undefined;
-  }
+ if(u.callback_query)return null;
+ const m=u.message;
+ if(m&&!m.from.is_bot&&m.chat.type==='private'&&m.chat.id===m.from.id){
+  const [cmd,arg]=m.text.trim().split(/\s+/);if(cmd.split('@')[0]==='/start'&&arg&&/^[A-Za-z0-9_-]{44}$/.test(arg))return {tenant:expand(arg.slice(0,22)),code:arg.slice(22),telegramId:String(m.from.id),updateId:u.update_id};
  }
- const reply={text,reply_markup:keyboard};await db.query("INSERT INTO audit(tenant_id,actor_id,event,data) VALUES($1,$2,'TELEGRAM_REPLY_QUEUED',$3)",[c.tenant,actor,JSON.stringify({updateId:String(u.update_id),reply})]);return reply;
+ return null;
 }
+export async function processTelegramUpdate(db:PoolClient,u:TelegramUpdate,c:NonNullable<ReturnType<typeof telegramContext>>){
+ const inserted=await db.query('INSERT INTO telegram_updates(update_id) VALUES($1) ON CONFLICT DO NOTHING RETURNING update_id',[u.update_id]);
+ if(!inserted.rowCount)return null;
+ const link=await db.query('SELECT l.id,l.user_id,u.username FROM telegram_links l JOIN users u ON u.id=l.user_id JOIN tenants t ON t.id=l.tenant_id JOIN memberships m ON m.user_id=l.user_id AND m.tenant_id=l.tenant_id WHERE l.tenant_id=$1 AND l.code_hash=$2 AND l.expires_at>now() AND l.telegram_id IS NULL AND NOT u.disabled AND NOT t.suspended FOR UPDATE OF l',[c.tenant,digest(c.code)]);
+ if(link.rowCount!==1)throw Error('PAIRING_REJECTED');
+ const actor=link.rows[0].user_id;
+ await db.query('DELETE FROM telegram_links WHERE user_id=$1 AND telegram_id IS NOT NULL',[actor]);
+ await db.query('UPDATE telegram_links SET telegram_id=$1,code_hash=NULL,expires_at=NULL WHERE id=$2',[c.telegramId,link.rows[0].id]);
+ await db.query('INSERT INTO telegram_preferences(tenant_id,user_id,enabled,markets) VALUES($1,$2,false,\'{}\') ON CONFLICT(tenant_id,user_id) DO NOTHING',[c.tenant,actor]);
+ await db.query("INSERT INTO audit(tenant_id,actor_id,event) VALUES($1,$2,'TELEGRAM_LINKED')",[c.tenant,actor]);
+ return {chat_id:c.telegramId,text:`✅ <b>VELA hesabınız bağlandı!</b>\n\n👤 İstifadəçi: <b>${String(link.rows[0].username).replace(/[&<>]/g,'')}</b>\n🔔 Xəbər və bazar baxışı bildirişlərini saytdakı Telegram bölməsindən aça bilərsiniz.\n🌐 Sayt bağlantı vəziyyətini avtomatik yeniləyəcək.\n\nℹ️ Bu bot ticarət əmri göndərmir və hesab əməliyyatlarını idarə etmir.`,parse_mode:'HTML' as const};
+}
+export async function processTelegramCommand(db:PoolClient,u:TelegramUpdate,tenant:string,user:string){
+ const m=u.message;if(!m)return null;
+ const inserted=await db.query('INSERT INTO telegram_updates(update_id) VALUES($1) ON CONFLICT DO NOTHING RETURNING update_id',[u.update_id]);if(!inserted.rowCount)return null;
+ const command=m.text.trim().split(/\s+/)[0].split('@')[0].toLowerCase();
+ if(command==='/start')return '✅ <b>VELA hesabınız artıq bağlıdır.</b>\n/status · /settings · /pause · /resume · /unlink';
+ if(command==='/status'){
+  const q=await db.query('SELECT p.enabled,p.market_outlooks,p.paused,p.markets,p.muted_until,(SELECT max(sent_at) FROM telegram_deliveries d WHERE d.tenant_id=p.tenant_id AND d.user_id=p.user_id) AS last_sent FROM telegram_preferences p WHERE p.tenant_id=$1 AND p.user_id=$2',[tenant,user]);const p=q.rows[0];
+  if(!p)return 'VELA ayarları tapılmadı. Saytdan Telegram-ı yenidən bağlayın.';
+  return `📡 <b>VELA vəziyyəti</b>\nBildirişlər: ${p.enabled&&!p.paused?'aktiv':'dayandırılıb'}\nAI baxışları: ${p.market_outlooks?'aktiv':'söndürülüb'}\nAktivlər: ${p.markets.join(', ')||'seçilməyib'}\nSon göndəriş: ${p.last_sent?new Date(p.last_sent).toLocaleString('az-AZ',{timeZone:'Asia/Baku'}):'hələ yoxdur'} (Bakı)`;
+ }
+ if(command==='/settings')return '⚙️ <b>VELA bildiriş ayarları</b>\nAktivləri, AI baxışlarını və saatlıq limiti saytın Telegram bölməsindən dəyişə bilərsiniz.';
+ if(command==='/pause'||command==='/resume'){
+  await db.query('UPDATE telegram_preferences SET paused=$3,updated_at=now() WHERE tenant_id=$1 AND user_id=$2',[tenant,user,command==='/pause']);
+  return command==='/pause'?'⏸ Bildirişlər dayandırıldı. /resume ilə davam edə bilərsiniz.':'▶️ Bildirişlər davam edir. Sayt seçimləriniz qüvvədədir.';
+ }
+ if(command==='/unlink'){
+  await db.query('DELETE FROM telegram_links WHERE tenant_id=$1 AND user_id=$2',[tenant,user]);await db.query('UPDATE telegram_preferences SET enabled=false,paused=true,updated_at=now() WHERE tenant_id=$1 AND user_id=$2',[tenant,user]);
+  return '🔒 Telegram bağlantısı kəsildi. Yenidən qoşulmaq üçün saytdan yeni link yaradın.';
+ }
+ return 'Komandalar: /status, /settings, /pause, /resume, /unlink';
+}
+
+

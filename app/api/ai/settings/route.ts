@@ -1,6 +1,8 @@
 import {NextResponse} from 'next/server';
-import {identity,requireOwner,sameOrigin} from '../../../../src/server/auth';
-import {tenantTx,audit} from '../../../../src/server/db';
-import {resolveAIConfig,preferenceInput} from '../../../../src/server/ai-settings';
-export async function GET(){try{const s=await identity();const c=await tenantTx(s.tenant_id,db=>resolveAIConfig(db));return NextResponse.json({preference:c.preference,effectiveInterval:c.effectiveInterval,minInterval:c.service.minInterval,dailyLimit:c.service.dailyLimit,ready:c.ready,canEdit:s.role==='OWNER',canConfigure:s.super_admin,...(s.super_admin?{service:c.service}:{})},{headers:{'Cache-Control':'no-store'}});}catch{return NextResponse.json({error:'AI seçimlərini görmək üçün daxil olun.'},{status:401});}}
-export async function PUT(req:Request){try{sameOrigin(req);const s=await identity();requireOwner(s);const p=preferenceInput.parse(await req.json());await tenantTx(s.tenant_id,async db=>{const c=await resolveAIConfig(db);if(p.intervalMinutes<c.service.minInterval)throw Error('INTERVAL');await db.query('INSERT INTO ai_preferences(tenant_id,enabled,symbols,interval_minutes) VALUES($1,$2,$3,$4) ON CONFLICT(tenant_id) DO UPDATE SET enabled=excluded.enabled,symbols=excluded.symbols,interval_minutes=excluded.interval_minutes,updated_at=now()',[s.tenant_id,p.enabled,p.symbols,p.intervalMinutes]);await audit(db,s.tenant_id,s.user_id,'AI_PREFERENCES_UPDATED');});return NextResponse.json({ok:true});}catch{return NextResponse.json({error:'Seçimlər saxlanmadı. Hesab sahibi ilə daxil olun və ən azı bir bazar seçin.'},{status:400});}}
+const disabled=()=>NextResponse.json({error:'Bu VELA buraxılışında broker və ticarət idarəetməsi söndürülüb.'},{status:410,headers:{'Cache-Control':'no-store'}});
+export async function GET(){return disabled();}
+export async function POST(){return disabled();}
+export async function PUT(){return disabled();}
+export async function PATCH(){return disabled();}
+export async function DELETE(){return disabled();}
+
