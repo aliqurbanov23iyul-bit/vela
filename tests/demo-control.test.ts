@@ -69,11 +69,11 @@ test('PostgreSQL website demo control, mode selection, Telegram grants and isola
    run=await tx(x=>controlDemo(x,user,account,'start','TELEGRAM'));candidate=await prepare();assert.equal(candidate.state,'PENDING');assert.ok(candidate.notification);
    assert.equal((await prepare()).notification,null);await assert.rejects(claim(),/APPROVAL_REQUIRED/);
   });
-  await t.test('linked owner approves and candidate executes only once',async()=>{
+  await t.test('Telegram approval callbacks are retired and cannot approve a candidate',async()=>{
    const approval=(await db.query<{approval_id:string}>('SELECT approval_id FROM demo_candidates WHERE id=$1',[candidate.id])).rows[0].approval_id;
    const u={update_id:123,callback_query:{id:'123',from:{id:101,is_bot:false},data:`${compact(tenant)}.${compact(approval)}.A`,message:{message_id:1,chat:{id:101,type:'private'}}}};
-   assert.match((await tx(x=>processTelegramUpdate(x,u,telegramContext(u)))).text,/Demo təklifi təsdiqləndi/);
-   assert.equal((await prepare()).state,'APPROVED');await claim();await assert.rejects(claim(),/EXPIRED/);
+   assert.equal(telegramContext(u),null);
+   assert.equal((await prepare()).state,'PENDING');
   });
   await t.test('stop invalidates in-flight candidates and prevents restart from old session',async()=>{
    await tx(x=>controlDemo(x,user,account,'stop','TELEGRAM'));await assert.rejects(prepare(),/STOPPED/);await assert.rejects(claim(),/STOPPED/);
@@ -86,3 +86,4 @@ test('PostgreSQL website demo control, mode selection, Telegram grants and isola
   assert.equal((await db.query('SELECT * FROM orders')).rows.length,0);
  }finally{await db.close();}
 });
+
