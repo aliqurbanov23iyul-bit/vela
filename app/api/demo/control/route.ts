@@ -7,7 +7,7 @@ import {observeDemo} from '../../../../src/core/demo-status';
 export async function GET(){try{
  const s=await identity();
  const data=await tenantTx(s.tenant_id,async db=>{
-  const accounts=(await db.query('SELECT a.id,a.label,a.account_type,a.heartbeat,a.snapshot,d.session_id,d.enabled,d.mode,d.started_at,d.expires_at,d.permission_version=a.permission_version AS current_permission,d.duration_hours,d.trade_limit,d.frequency,d.stop_reason FROM accounts a LEFT JOIN demo_control d ON d.account_id=a.id ORDER BY a.label')).rows;
+  const accounts=(await db.query('SELECT a.id,a.label,a.account_type,a.heartbeat,a.snapshot,d.session_id,d.enabled,d.mode,d.test_mode,d.started_at,d.expires_at,d.permission_version=a.permission_version AS current_permission,d.duration_hours,d.trade_limit,d.frequency,d.stop_reason FROM accounts a LEFT JOIN demo_control d ON d.account_id=a.id ORDER BY a.label')).rows;
   for(const a of accounts){
    const run=await demoRun(db,a.id),snapshot=a.snapshot as {demoPilot?:{enabled?:boolean;phase?:string;reason?:string}}|null;
    const observed=observeDemo({desired:run?.enabled===true&&a.current_permission===true,accountType:a.account_type,heartbeatAt:a.heartbeat?new Date(a.heartbeat as string).toISOString():null,startedAt:run?.startedAt??null,pilot:snapshot?.demoPilot});
@@ -22,7 +22,8 @@ export async function GET(){try{
 export async function POST(req:Request){try{
  sameOrigin(req);const s=await identity();requireOwner(s);
  const b=demoOptions.extend({accountId:z.string().uuid(),operation:z.enum(['start','stop']),mode:z.enum(['AUTO','TELEGRAM']).default('TELEGRAM')}).strict().parse(await req.json());
+ if(b.operation==='start'&&b.testMode&&b.mode!=='TELEGRAM')throw Error('TEST_REQUIRES_TELEGRAM');
  if(b.operation==='start'&&b.mode==='TELEGRAM'&&(!process.env.TELEGRAM_BOT_TOKEN||!process.env.TELEGRAM_WEBHOOK_SECRET))throw Error('TELEGRAM');
  const run=await tenantTx(s.tenant_id,db=>controlDemo(db,s.user_id,b.accountId,b.operation,b.mode,b));
  return NextResponse.json({ok:true,run});
- }catch(e){const code=e instanceof Error?e.message:'';const messages:Record<string,string>={STOP_FIRST:'Ayarları dəyişmək üçün əvvəl botu dayandır.',CONNECTOR:'MT5 və VELA-nın yeni versiyası açıq olmalıdır. Bağlantıdan yeni məlumat gözlənilir.',DEMO_ONLY:'Bu funksiya yalnız demo hesabı üçündür.',TELEGRAM:'Əvvəl Bağlantılar bölməsində Telegramı qoş.',FORBIDDEN:'Bu hesabı idarə etmək üçün sahib icazəsi lazımdır.'};return NextResponse.json({error:messages[code]??'Dəyişiklik saxlanmadı. Yenidən yoxla.'},{status:400});}}
+ }catch(e){const code=e instanceof Error?e.message:'';const messages:Record<string,string>={STOP_FIRST:'Ayarları dəyişmək üçün əvvəl botu dayandır.',CONNECTOR:'MT5 və VELA-nın yeni versiyası açıq olmalıdır. Bağlantıdan yeni məlumat gözlənilir.',DEMO_ONLY:'Bu funksiya yalnız demo hesabı üçündür.',TELEGRAM:'Əvvəl Bağlantılar bölməsində Telegramı qoş.',TEST_REQUIRES_TELEGRAM:'Test rejimi üçün Telegram təsdiqini seç.',FORBIDDEN:'Bu hesabı idarə etmək üçün sahib icazəsi lazımdır.'};return NextResponse.json({error:messages[code]??'Dəyişiklik saxlanmadı. Yenidən yoxla.'},{status:400});}}

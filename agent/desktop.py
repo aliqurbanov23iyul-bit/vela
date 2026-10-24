@@ -18,7 +18,7 @@ CONFIG_PATH = ROOT / 'connection.dat'
 INSTALLED = ROOT / 'VELA.exe'
 FROZEN = bool(getattr(sys, 'frozen', False))
 NO_WINDOW = 0x08000000
-VERSION = '1.4.2'
+VERSION = '1.4.3'
 
 
 def record_status(event, error=None):
@@ -566,4 +566,3 @@ def entry():
 
 if __name__ == '__main__':
     raise SystemExit(entry())
-

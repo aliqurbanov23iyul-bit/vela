@@ -19,7 +19,7 @@ class DemoApprovalClient:
 
     def prepare(self,settings,packet,request,planned_risk_money=None):
         return self.post({'operation':'prepare','sessionId':settings['sessionId'],
-                          'symbol':packet['symbol'],
+                          'symbol':packet['symbol'],'testMode':settings.get('testMode',False),
                           'barAt':datetime.fromtimestamp(packet['m5'][-1]['time']/1000,timezone.utc).isoformat().replace('+00:00','Z'),
                           'request':request,'plannedRiskMoney':planned_risk_money})
 
@@ -51,4 +51,3 @@ def collect_deals(api,offset_minutes,now=None,session_ids=None,positions=None):
                  side='BUY' if d.type==0 else 'SELL',entry=('IN','OUT','INOUT','OUT_BY')[d.entry],
                  volume=d.volume,price=d.price,profit=d.profit,commission=d.commission,swap=d.swap,fee=d.fee,
                  at=datetime.fromtimestamp((d.time_msc or d.time*1000)/1000-offset_minutes*60,timezone.utc).isoformat().replace('+00:00','Z'),magic=d.magic,botPosition=True,sessionId=positions.get(str(d.position_id))) for d in selected]
-

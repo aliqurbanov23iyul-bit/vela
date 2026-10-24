@@ -14,7 +14,7 @@ export async function POST(req:Request){try{
  const b=demoCandidate.parse(input),result=await tenantTx(b.tenantId,db=>prepareDemo(db,b,raw));
  if(result.notification){const n=result.notification,r=n.request;
   try{
-   await telegram('sendMessage',{chat_id:n.chat,text:proposalMessage(n.label,{demo:true,symbol:b.symbol,side:r.type===0?'BUY':'SELL',entry:r.price,stop:r.sl,take:r.tp,volume:r.volume,riskMoney:n.riskMoney,riskPercent:n.riskPercent,currency:n.currency,riskCapPercent:0.25},n.expiresAt),parse_mode:'HTML',reply_markup:approvalKeyboard(b.tenantId,n.approvalId)});
+   await telegram('sendMessage',{chat_id:n.chat,text:proposalMessage(n.label,{demo:true,testMode:b.testMode,symbol:b.symbol,side:r.type===0?'BUY':'SELL',entry:r.price,stop:r.sl,take:r.tp,volume:r.volume,riskMoney:n.riskMoney,riskPercent:n.riskPercent,currency:n.currency,riskCapPercent:0.25},n.expiresAt),parse_mode:'HTML',reply_markup:approvalKeyboard(b.tenantId,n.approvalId)});
    await tenantTx(b.tenantId,async db=>{
     await db.query('UPDATE demo_candidates SET notified_at=now() WHERE id=$1',[n.id]);
     await db.query("INSERT INTO audit(tenant_id,actor_id,account_id,event,data) SELECT $1,user_id,$2,'TELEGRAM_PROPOSAL_SENT',$3 FROM approvals WHERE id=$4",[b.tenantId,b.accountId,JSON.stringify({approvalId:n.approvalId}),n.approvalId]);
@@ -23,4 +23,3 @@ export async function POST(req:Request){try{
  }
  const {notification,...safe}=result;return NextResponse.json(safe,{headers:{'Cache-Control':'no-store'}});
  }catch(e){const reason=e instanceof Error?e.message:'';return NextResponse.json({ok:false,state:['EXPIRED','STOPPED','LIMIT','APPROVAL_REQUIRED','STALE_SIGNAL','TELEGRAM','COUNT_PENDING','COOLDOWN','UNRESOLVED'].includes(reason)?reason:'REJECTED'},{status:400});}}
-

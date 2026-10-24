@@ -7,6 +7,7 @@ import time
 import threading
 import os
 import time
+import secrets
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_FLOOR
 from pathlib import Path
@@ -92,6 +93,16 @@ def technical_signal(packet, now):
     direction='BUY' if all(a>b for a,b in frames) and 50<=rsi<=65 else 'SELL' if all(a<b for a,b in frames) and 35<=rsi<=50 else None
     return (direction,atr) if direction else None
 
+def random_test_signal(packet, now):
+    """Random direction for demo testing, using fresh candles only for sizing."""
+    bars=packet.get('m5',[])
+    if len(bars)<20:return None
+    if any(not all(isinstance(b.get(k),(int,float)) and math.isfinite(b[k]) and b[k]>0 for k in ('open','close','high','low','time')) or b['high']<max(b['open'],b['close']) or b['low']>min(b['open'],b['close']) for b in bars):return None
+    if any(b['time']<=a['time'] for a,b in zip(bars,bars[1:])) or not 300<=now-bars[-1]['time']/1000<=620:return None
+    ranges=[max(b['high']-b['low'],abs(b['high']-a['close']),abs(b['low']-a['close'])) for a,b in zip(bars,bars[1:])]
+    atr=sum(ranges[-14:])/14
+    return (secrets.choice(('BUY','SELL')),atr) if math.isfinite(atr) and atr>0 else None
+
 
 def expired(settings,now):
     return settings.get('expiresAt') is not None and now>=settings['expiresAt']
@@ -176,7 +187,7 @@ class DemoPilot:
         UUID(run['sessionId'])
         start=epoch(run.get('startedAt'));end=epoch(run.get('expiresAt')) if run.get('expiresAt') is not None else None
         limit=run.get('tradeLimit');frequency=run.get('frequency','SIGNAL')
-        if run.get('mode') not in ('AUTO','TELEGRAM') or frequency not in ('SIGNAL','HOURLY') or start>self.clock()+5 or (end is not None and (not 0<end-start<=86400 or end<=self.clock())) or (limit is not None and (type(limit) is not int or not 1<=limit<=1000000)):
+        if run.get('mode') not in ('AUTO','TELEGRAM') or (run.get('testMode') is True and run.get('mode')!='TELEGRAM') or frequency not in ('SIGNAL','HOURLY') or start>self.clock()+5 or (end is not None and (not 0<end-start<=86400 or end<=self.clock())) or (limit is not None and (type(limit) is not int or not 1<=limit<=1000000)):
             disarm(self.root);return
         progress=dict(completedTrades=run.get('completedTrades',0),openedTrades=run.get('openedTrades',0),tradeLimit=limit,frequency=frequency)
         with SETTINGS_LOCK:
@@ -185,7 +196,7 @@ class DemoPilot:
             except (OSError,ValueError):previous={}
             if previous.get('sessionId')==run['sessionId']:
                 previous.update(progress);write_settings(path,previous);return
-            write_settings(path,dict(enabled=True,sessionId=run['sessionId'],login=self.config['MT5_LOGIN'],server=self.config['MT5_SERVER'],startedAt=start,expiresAt=end,unlimitedTime=end is None,startingEquity=None,permissionVersion=version,mode=run['mode'],**progress))
+            write_settings(path,dict(enabled=True,sessionId=run['sessionId'],login=self.config['MT5_LOGIN'],server=self.config['MT5_SERVER'],startedAt=start,expiresAt=end,unlimitedTime=end is None,startingEquity=None,permissionVersion=version,mode=run['mode'],testMode=run.get('testMode') is True,**progress))
 
     def _step(self,observations,stop_event,control):
         now=self.clock()
@@ -244,6 +255,15 @@ class DemoPilot:
             packet,response=entry
             if response.get('dataIssues')!=[]:
                 checks.append(symbol+': qiymət və ya şam məlumatı köhnə/natamamdır ('+', '.join(response.get('dataIssues') or ['yoxlanmadı'])+').')
+                continue
+            if s.get('testMode'):
+                signal=random_test_signal(packet,now)
+                if not signal:
+                    checks.append(symbol+': test üçün təzə M5 şamları gözlənilir.')
+                    continue
+                result=self.submit(s,account,packet,signal,stop_event)
+                if result:return result
+                checks.append(symbol+': bu şam üçün test təklifi artıq yoxlanıb.')
                 continue
             observation=response.get('demoObservation')
             if not isinstance(observation,dict) or observation.get('symbol')!=symbol:
@@ -380,4 +400,3 @@ class DemoPilot:
         details=''
         if result is not None:details=' Broker cavabı: retcode '+str(getattr(result,'retcode','?'))+'.'
         return self.report(state,diagnostic=('Demo əmri brokerdə icra olundu.' if state=='FILLED' else 'Broker əmri rədd etdi.' if state=='REJECTED' else 'Broker cavabı qeyri-müəyyəndir; təkrar sifariş bloklandı.')+details)
-

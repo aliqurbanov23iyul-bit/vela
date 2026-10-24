@@ -26,7 +26,7 @@ class PilotTests(unittest.TestCase):
   self.packet={'symbol':'EURUSD','brokerSymbol':'EURUSD','m5':[{'time':(self.now-300)*1000}]}
   self.obs={'EURUSD':(self.packet,{'dataIssues':[],'demoObservation':{'symbol':'EURUSD','newsAssessed':True,'bias':'BUY','expiresAt':self.iso(self.now+150)}})}
   self.approval=Mock()
-  def prepare(settings,packet,request):
+  def prepare(settings,packet,request,planned_risk=None):
    self.last_request=request
    return {'state':'APPROVED','id':'candidate','expiresAt':self.iso(self.now+120),'request':request}
   self.approval.prepare.side_effect=prepare
@@ -38,7 +38,7 @@ class PilotTests(unittest.TestCase):
  def iso(self,t):return datetime.fromtimestamp(t,timezone.utc).isoformat()
  def remote_control(self):
   s=json.loads((self.root/'demo-pilot.json').read_text())
-  return {**self.control,'run':dict(sessionId=s['sessionId'],enabled=s['enabled'],mode=s.get('mode','AUTO'),startedAt=self.iso(s['startedAt']),expiresAt=self.iso(s['expiresAt']))}
+  return {**self.control,'run':dict(sessionId=s['sessionId'],enabled=s['enabled'],mode=s.get('mode','AUTO'),testMode=s.get('testMode',False),startedAt=self.iso(s['startedAt']),expiresAt=self.iso(s['expiresAt']))}
  def step(self):return self.pilot.step(self.obs,control=self.remote_control())
  def test_demo_submission_has_risk_sized_volume_and_protection(self):
   self.assertEqual(self.step()['phase'],'FILLED');r=self.api.order_send.call_args.args[0]
@@ -62,7 +62,7 @@ class PilotTests(unittest.TestCase):
   self.approval.claim.side_effect=None;self.approval.claim.return_value={'ok':False}
   self.assertEqual(self.step()['phase'],'DECLINED');self.api.order_send.assert_not_called()
  def test_changed_approved_volume_over_risk_blocks(self):
-  def prepare(settings,packet,request):return {'state':'APPROVED','id':'candidate','expiresAt':self.iso(self.now+120),'request':dict(request,volume=5.)}
+  def prepare(settings,packet,request,planned_risk=None):return {'state':'APPROVED','id':'candidate','expiresAt':self.iso(self.now+120),'request':dict(request,volume=5.)}
   self.approval.prepare.side_effect=prepare
   self.assertEqual(self.step()['phase'],'DATA');self.api.order_send.assert_not_called()
  def test_no_approval_client_never_sends(self):
@@ -119,6 +119,16 @@ class PilotTests(unittest.TestCase):
   run=dict(sessionId=settings['sessionId'],enabled=True,mode='AUTO',startedAt=self.iso(settings['startedAt']),expiresAt=self.iso(settings['expiresAt']),tradeLimit=3,openedTrades=3,completedTrades=3)
   control={**self.control,'run':run}
   self.assertEqual(self.pilot.step(self.obs,control=control)['phase'],'LIMIT_WAIT');self.api.order_send.assert_not_called()
+ def test_random_test_mode_sends_labeled_telegram_proposal_without_order(self):
+  path=self.root/'demo-pilot.json';settings=json.loads(path.read_text());settings.update(mode='TELEGRAM',testMode=True);path.write_text(json.dumps(settings))
+  bars=[]
+  for i in range(20):
+   price=1.1+i*.00001;bars.append(dict(time=(self.now-(20-i)*300)*1000,open=price,close=price,high=price+.001,low=price-.001))
+  self.packet['m5']=bars
+  self.approval.prepare.side_effect=None;self.approval.prepare.return_value={'state':'PENDING'}
+  self.assertEqual(self.step()['phase'],'APPROVAL')
+  self.approval.prepare.assert_called_once();self.api.order_send.assert_not_called()
+  self.assertTrue(json.loads(path.read_text())['testMode'])
 
 class IndicatorTests(unittest.TestCase):
  def test_closed_oscillating_trend_and_stale_data(self):

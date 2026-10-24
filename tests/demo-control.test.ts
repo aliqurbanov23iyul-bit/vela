@@ -22,7 +22,7 @@ test('PostgreSQL website demo control, mode selection, Telegram grants and isola
  const barAt=new Date(Math.floor(Date.now()/300000)*300000-300000).toISOString();
  const request=(session:string)=>({action:1 as const,symbol:'EURUSD',volume:.01,type:0 as const,price:1.1,sl:1.09,tp:1.12,deviation:10 as const,magic:2601023 as const,comment:'VELA-DEMO-'+session.slice(0,8),type_time:0 as const,type_filling:1 as const});
  let run:any,candidate:any;
- const prepare=(session=run.sessionId)=>tx(x=>prepareDemo(x,{...identity,operation:'prepare',sessionId:session,symbol:'EURUSD',barAt,request:request(session)},token));
+ const prepare=(session=run.sessionId)=>tx(x=>prepareDemo(x,{...identity,operation:'prepare',sessionId:session,testMode:run.testMode===true,symbol:'EURUSD',barAt,request:request(session)},token));
  const claim=(id=candidate.id,session=run.sessionId)=>tx(x=>claimDemo(x,{...identity,operation:'claim',sessionId:session,candidateId:id},token));
  try{
   await applyMigrations(c);
@@ -53,6 +53,17 @@ test('PostgreSQL website demo control, mode selection, Telegram grants and isola
    await tx(x=>reportDemo(x,{...identity,operation:'report',candidateId:candidate.id,state:'REJECTED',result:{retcode:10016}},token));
   });
   await db.query('INSERT INTO telegram_links(id,tenant_id,user_id,telegram_id) VALUES($1,$2,$3,\'101\')',[randomUUID(),tenant,user]);
+  await t.test('random test mode is Telegram-only, tagged, and uses fresh market data',async()=>{
+   await tx(x=>controlDemo(x,user,account,'stop','AUTO'));
+   await assert.rejects(tx(x=>controlDemo(x,user,account,'start','AUTO',{testMode:true})),/TEST_REQUIRES_TELEGRAM/);
+   run=await tx(x=>controlDemo(x,user,account,'start','TELEGRAM',{testMode:true}));assert.equal(run.testMode,true);
+   candidate=await prepare();assert.equal(candidate.state,'PENDING');assert.ok(candidate.notification);
+   const proposal=(await db.query<{payload:Record<string,unknown>}>('SELECT payload FROM proposals WHERE id=$1',[candidate.id])).rows[0].payload;
+   assert.equal(proposal.testMode,true);
+   const {proposalMessage}=await import('../src/server/telegram');assert.match(proposalMessage('Demo',proposal,new Date(Date.now()+60000)),/TEST SİQNALI/);
+   await tx(x=>controlDemo(x,user,account,'stop','TELEGRAM'));
+   run=await tx(x=>controlDemo(x,user,account,'start','TELEGRAM'));candidate=await prepare();assert.equal(candidate.state,'PENDING');
+  });
   await t.test('Telegram candidate is sent once and cannot be claimed before approval',async()=>{
    await tx(x=>controlDemo(x,user,account,'stop','TELEGRAM'));
    run=await tx(x=>controlDemo(x,user,account,'start','TELEGRAM'));candidate=await prepare();assert.equal(candidate.state,'PENDING');assert.ok(candidate.notification);
