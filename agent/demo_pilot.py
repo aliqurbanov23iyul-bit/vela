@@ -113,7 +113,7 @@ class DemoPilot:
             if 'candidate' not in columns:db.execute('ALTER TABLE attempts ADD COLUMN candidate TEXT')
             if 'reported' not in columns:db.execute('ALTER TABLE attempts ADD COLUMN reported INTEGER NOT NULL DEFAULT 0')
             db.execute('CREATE TABLE IF NOT EXISTS history_positions(account TEXT NOT NULL,position TEXT NOT NULL,session TEXT,PRIMARY KEY(account,position))')
-        self.status=dict(enabled=False,phase='OFF',reason=REASONS['OFF'],expiresAt=None,attempts=0,equityChange=0.0,riskPercent=0.25,maxAttempts=None,tradeLimit=None,completedTrades=0,openedTrades=0)
+        self.status=dict(enabled=False,phase='OFF',reason=REASONS['OFF'],diagnostic='',expiresAt=None,attempts=0,equityChange=0.0,riskPercent=0.25,maxAttempts=None,tradeLimit=None,completedTrades=0,openedTrades=0)
 
     @contextmanager
     def db(self):
@@ -123,7 +123,9 @@ class DemoPilot:
         finally:connection.close()
 
     def report(self,phase,**values):
-        self.status.update(phase=phase,reason=REASONS[phase],**values)
+        update=dict(phase=phase,reason=REASONS[phase],diagnostic='')
+        update.update(values)
+        self.status.update(update)
         (self.root/'demo-pilot-status.json').write_text(json.dumps(self.status),encoding='utf-8')
         return self.status
 
@@ -145,7 +147,7 @@ class DemoPilot:
 
     def step(self,observations,stop_event=None,control=None):
         try:return self._step(observations,stop_event,control)
-        except Exception:return self.report('ERROR')
+        except Exception as error:return self.report('ERROR',diagnostic='Daxili yoxlama xətası: '+type(error).__name__)
 
     def collect_history(self):
         from demo_bridge import collect_deals
@@ -187,16 +189,16 @@ class DemoPilot:
 
     def _step(self,observations,stop_event,control):
         now=self.clock()
-        if not isinstance(control,dict) or not isinstance(control.get('permissionVersion'),int) or not -5<=now-epoch(control.get('observedAt'))<=45:return self.report('DATA')
+        if not isinstance(control,dict) or not isinstance(control.get('permissionVersion'),int) or not -5<=now-epoch(control.get('observedAt'))<=45:return self.report('DATA',diagnostic='Saytdan gələn idarəetmə məlumatı köhnədir və ya yoxdur.')
         self.report_outcomes()
         run=control.get('run')
         self.sync_remote(run,control['permissionVersion'])
         if isinstance(run,dict) and run.get('enabled') is False and run.get('stopReason') in ('COUNT_LIMIT','TIME_LIMIT'):
             return self.report('LIMIT' if run['stopReason']=='COUNT_LIMIT' else 'EXPIRED',enabled=False,completedTrades=run.get('completedTrades',0),openedTrades=run.get('openedTrades',0),tradeLimit=run.get('tradeLimit'))
         s=self.settings()
-        if not s or (stop_event and stop_event.is_set()):return self.report('OFF',enabled=False)
+        if not s or (stop_event and stop_event.is_set()):return self.report('OFF',enabled=False,diagnostic='Saytda demo sessiyasını başlat və ya agenti başladan kompüterdə açıq saxla.')
         self.status.update(enabled=True,expiresAt=datetime.fromtimestamp(s['expiresAt'],timezone.utc).isoformat() if s['expiresAt'] is not None else None,tradeLimit=s.get('tradeLimit'),completedTrades=s.get('completedTrades',0),openedTrades=s.get('openedTrades',0))
-        if expired(s,now):return self.report('EXPIRED',enabled=False)
+        if expired(s,now):return self.report('EXPIRED',enabled=False,diagnostic='Seçilmiş sessiya vaxtı bitib.')
         with SETTINGS_LOCK:
             current=self.settings()
             if not current or current['sessionId']!=s['sessionId']:return self.report('OFF',enabled=False)
@@ -204,8 +206,8 @@ class DemoPilot:
                 disarm(self.root);return self.report('OFF',enabled=False)
             current['permissionVersion']=control['permissionVersion'];write_settings(self.root/'demo-pilot.json',current);s=current
         api=self.api;a=api.account_info();terminal=api.terminal_info()
-        if not self.identity(a):return self.report('REAL_BLOCKED')
-        if not terminal or not terminal.connected or not getattr(terminal,'trade_allowed',False) or getattr(terminal,'tradeapi_disabled',True) or not getattr(a,'trade_allowed',False) or not getattr(a,'trade_expert',False):return self.report('ALGO_OFF')
+        if not self.identity(a):return self.report('REAL_BLOCKED',diagnostic='MT5 hesab nömrəsi, server və ya demo hesab tipi uyğun deyil.')
+        if not terminal or not terminal.connected or not getattr(terminal,'trade_allowed',False) or getattr(terminal,'tradeapi_disabled',True) or not getattr(a,'trade_allowed',False) or not getattr(a,'trade_expert',False):return self.report('ALGO_OFF',diagnostic='MT5 bağlantısını və Algo Trading / Python ticarət icazələrini yoxla.')
         if not math.isfinite(a.equity) or a.equity<=0:return self.report('DATA')
         if s.get('startingEquity') is None:
             with SETTINGS_LOCK:
@@ -231,60 +233,85 @@ class DemoPilot:
         if s.get('tradeLimit') is not None and opened>=s['tradeLimit']:return self.report('LIMIT_WAIT')
         positions=api.positions_get();orders=api.orders_get()
         if positions is None or orders is None:return self.report('DATA')
-        if positions or orders:return self.report('POSITION_EXISTS')
-        if last is not None and now-last<(3600 if s.get('frequency')=='HOURLY' else 1800):return self.report('COOLDOWN')
+        if positions or orders:return self.report('POSITION_EXISTS',diagnostic='Hesabda açıq mövqe və ya gözləyən əmr var. Bot eyni anda yalnız bir mövqeyə icazə verir.')
+        if last is not None and now-last<(3600 if s.get('frequency')=='HOURLY' else 1800):return self.report('COOLDOWN',diagnostic='Əvvəlki girişdən sonrakı təhlükəsizlik fasiləsi hələ bitməyib.')
+        checks=[]
         for symbol in ('EURUSD','XAUUSD'):
             entry=observations.get(symbol)
-            if not entry:continue
+            if not entry:
+                checks.append(symbol+': kompüterdən təzə bazar məlumatı gözlənilir.')
+                continue
             packet,response=entry
-            if response.get('dataIssues')!=[]:continue
+            if response.get('dataIssues')!=[]:
+                checks.append(symbol+': qiymət və ya şam məlumatı köhnə/natamamdır ('+', '.join(response.get('dataIssues') or ['yoxlanmadı'])+').')
+                continue
             observation=response.get('demoObservation')
-            if not isinstance(observation,dict) or observation.get('symbol')!=symbol or observation.get('newsAssessed') is not True:continue
-            if not now<epoch(observation.get('expiresAt'))<=now+300:continue
+            if not isinstance(observation,dict) or observation.get('symbol')!=symbol:
+                latest=response.get('latestAnalysis') or {}
+                if latest.get('status')=='NO_PROVIDER':checks.append(symbol+': AI provayderindən cavab gəlməyib; API açarı/model ayarını yoxla.')
+                elif latest.get('status')=='FAILED':checks.append(symbol+': AI analizi uğursuz oldu.')
+                elif latest.get('status')=='COMPLETED' and latest.get('newsAssessed') is not True:checks.append(symbol+': AI xəbərləri qiymətləndirməyib; əməliyyat açılmır.')
+                else:checks.append(symbol+': yeni, tamamlanmış AI istiqaməti yoxdur.')
+                continue
+            if observation.get('newsAssessed') is not True:
+                checks.append(symbol+': xəbər qiymətləndirməsi yoxdur; əməliyyat açılmır.')
+                continue
+            if not now<epoch(observation.get('expiresAt'))<=now+300:
+                checks.append(symbol+': AI siqnalının vaxtı keçib; yenisi gözlənilir.')
+                continue
             signal=technical_signal(packet,now)
-            if not signal or observation.get('bias')!=signal[0]:continue
+            if not signal:
+                checks.append(symbol+': təsdiqlənmiş EMA/RSI texniki siqnalı yoxdur.')
+                continue
+            if observation.get('bias') not in ('BUY','SELL'):
+                checks.append(symbol+': AI “gözlə” deyib (NO_TRADE).')
+                continue
+            if observation.get('bias')!=signal[0]:
+                checks.append(symbol+': AI istiqaməti ilə texniki siqnal uyğun gəlmir.')
+                continue
             result=self.submit(s,account,packet,signal,stop_event)
             if result:return result
-        return self.report('WAITING')
+            checks.append(symbol+': bu şam üçün əməliyyat artıq yoxlanıb; növbəti şam gözlənilir.')
+        return self.report('WAITING',diagnostic=' '.join(checks)[:500] or 'Təzə bazar məlumatı və uyğun siqnal gözlənilir.')
 
     def submit(self,s,account,packet,signal,stop_event):
         api=self.api;now=self.clock();direction,atr=signal;symbol=packet['brokerSymbol'];base=packet['symbol']
         info=api.symbol_info(symbol);tick=api.symbol_info_tick(symbol);a=api.account_info()
         if not self.identity(a):return self.report('REAL_BLOCKED')
-        if not info or not tick or info.trade_mode!=api.SYMBOL_TRADE_MODE_FULL or info.order_mode&49!=49:return None
+        if not info or not tick or info.trade_mode!=api.SYMBOL_TRADE_MODE_FULL or info.order_mode&49!=49:return self.report('DATA',diagnostic=base+': broker bu simvolda bazar əmrinə, SL və ya TP-yə icazə vermir.')
         quote=(getattr(tick,'time_msc',0) or tick.time*1000)/1000-int(self.config['MT5_BROKER_UTC_OFFSET_MINUTES'])*60
-        if not -5<=now-quote<=15 or tick.bid<=0 or tick.ask<tick.bid:return None
-        if tick.ask-tick.bid>min(atr*0.25,0.0003 if base=='EURUSD' else 1.0):return None
+        if not -5<=now-quote<=15 or tick.bid<=0 or tick.ask<tick.bid:return self.report('DATA',diagnostic=base+': MT5 qiyməti təzə deyil.')
+        if tick.ask-tick.bid>min(atr*0.25,0.0003 if base=='EURUSD' else 1.0):return self.report('DATA',diagnostic=base+': alış-satış fərqi (spread) limitdən yüksəkdir.')
         step=info.trade_tick_size or info.point
-        if not math.isfinite(step) or step<=0:return None
+        if not math.isfinite(step) or step<=0:return self.report('DATA',diagnostic=base+': brokerin qiymət addımı alınmadı.')
         price=tick.ask if direction=='BUY' else tick.bid
         distance=max(2*atr,(info.trade_stops_level+2)*info.point)
         sl=math.floor((price-distance)/step)*step if direction=='BUY' else math.ceil((price+distance)/step)*step
         tp=math.ceil((price+3*atr)/step)*step if direction=='BUY' else math.floor((price-3*atr)/step)*step
         sl=round(sl,info.digits);tp=round(tp,info.digits)
-        if sl<=0 or tp<=0 or (direction=='BUY' and not sl<price<tp) or (direction=='SELL' and not tp<price<sl):return None
+        if sl<=0 or tp<=0 or (direction=='BUY' and not sl<price<tp) or (direction=='SELL' and not tp<price<sl):return self.report('DATA',diagnostic=base+': təhlükəsiz stop-loss/take-profit qiyməti hesablana bilmədi.')
         kind=api.ORDER_TYPE_BUY if direction=='BUY' else api.ORDER_TYPE_SELL
         loss=api.order_calc_profit(kind,symbol,1.0,price,sl)
-        if loss is None or not math.isfinite(loss) or loss>=0 or info.volume_step<=0:return None
+        if loss is None or not math.isfinite(loss) or loss>=0 or info.volume_step<=0:return self.report('DATA',diagnostic=base+': broker lot üzrə mümkün zərəri hesablaya bilmədi.')
         budget=a.equity*0.0025*0.9 # reserve 10% of planned loss budget for costs
         unit=Decimal(str(info.volume_step));volume=float((Decimal(str(min(budget/abs(loss),info.volume_max)))/unit).to_integral_value(rounding=ROUND_FLOOR)*unit)
-        if volume<info.volume_min or volume<=0:return None
+        if volume<info.volume_min or volume<=0:return self.report('DATA',diagnostic=base+': brokerin minimum lotu 0,25% risk limitinə sığmır; təhlükəsizlik üçün giriş bloklandı.')
         margin=api.order_calc_margin(kind,symbol,volume,price)
-        if margin is None or not math.isfinite(margin) or margin<=0 or margin>a.margin_free*0.5:return None
+        if margin is None or not math.isfinite(margin) or margin<=0 or margin>a.margin_free*0.5:return self.report('DATA',diagnostic=base+': tələb olunan marja sərbəst balansın təhlükəsiz həddini keçir.')
         if info.filling_mode&2:filling=api.ORDER_FILLING_IOC
         elif info.filling_mode&1:filling=api.ORDER_FILLING_FOK
         elif info.trade_exemode!=api.SYMBOL_TRADE_EXECUTION_MARKET:filling=api.ORDER_FILLING_RETURN
-        else:return None
+        else:return self.report('DATA',diagnostic=base+': brokerin dəstəklədiyi əmr icra növü müəyyən edilmədi.')
         request=dict(action=api.TRADE_ACTION_DEAL,symbol=symbol,volume=volume,type=kind,price=price,sl=sl,tp=tp,
                      deviation=10,magic=MAGIC,comment='VELA-DEMO-'+s['sessionId'][:8],type_time=api.ORDER_TIME_GTC,type_filling=filling)
-        if self.approval_client is None:return self.report('APPROVAL')
+        if self.approval_client is None:return self.report('APPROVAL',diagnostic='Telegram təsdiq kanalı hazır deyil; sifariş göndərilməyib.')
         approval=self.approval_client.prepare(s,packet,request)
-        if approval.get('state')=='COUNT_PENDING':return self.report('LIMIT_WAIT')
-        if approval.get('state')=='COOLDOWN':return self.report('COOLDOWN')
-        if approval.get('state')=='UNRESOLVED':return self.report('UNKNOWN')
-        if approval.get('state')=='PENDING':return self.report('APPROVAL')
-        if approval.get('state')!='APPROVED':return self.report('DECLINED')
-        if not now<epoch(approval.get('expiresAt'))<=now+300:return self.report('DECLINED')
+        if approval.get('state')=='COUNT_PENDING':return self.report('LIMIT_WAIT',diagnostic='Seçilmiş əməliyyat sayı limiti dolub.')
+        if approval.get('state')=='COOLDOWN':return self.report('COOLDOWN',diagnostic='Server tezlik limitinə görə yeni girişə fasilə verir.')
+        if approval.get('state')=='UNRESOLVED':return self.report('UNKNOWN',diagnostic='Əvvəlki əmrin nəticəsi dəqiqləşməyib; təkrar giriş təhlükəsizlik üçün bloklandı.')
+        if approval.get('state')=='PENDING':return self.report('APPROVAL',diagnostic='Telegram təsdiqi gözlənilir; təsdiqsiz sifariş göndərilməyib.')
+        if approval.get('state')!='APPROVED':return self.report('DECLINED',diagnostic='Saytın təzə siqnal, sessiya və ya risk yoxlaması bu girişi qəbul etmədi ('+str(approval.get('state','naməlum'))+').')
+        if not now<epoch(approval.get('expiresAt'))<=now+300:return self.report('DECLINED',diagnostic='Giriş təklifinin vaxtı keçib; yeni siqnal gözlənilir.')
         approved=approval.get('request')
         if not isinstance(approved,dict) or any(approved.get(k)!=request[k] for k in ('action','symbol','type','deviation','magic','comment','type_time','type_filling')):return self.report('DATA')
         request=approved
@@ -320,7 +347,7 @@ class DemoPilot:
         except Exception:check=None
         if check is None or check.retcode!=0:
             with self.db() as db:db.execute("UPDATE attempts SET state='REJECTED' WHERE k=?",(key,))
-            return self.report('REJECTED')
+            return self.report('REJECTED',diagnostic='MT5 order_check sifarişi qəbul etmədi'+(' (retcode '+str(check.retcode)+').' if check is not None else '; broker cavabı yoxdur.'))
         try:grant=self.approval_client.claim(s,approval['id'])
         except Exception:
             with self.db() as db:db.execute("UPDATE attempts SET state='REJECTED' WHERE k=?",(key,))
@@ -347,4 +374,7 @@ class DemoPilot:
         safe={k:getattr(result,k,None) for k in ('retcode','order','deal','volume','price')}
         with self.db() as db:db.execute('UPDATE attempts SET state=?,result=? WHERE k=?',(state,json.dumps(safe),key))
         self.report_outcomes()
-        return self.report(state)
+        details=''
+        if result is not None:details=' Broker cavabı: retcode '+str(getattr(result,'retcode','?'))+'.'
+        return self.report(state,diagnostic=('Demo əmri brokerdə icra olundu.' if state=='FILLED' else 'Broker əmri rədd etdi.' if state=='REJECTED' else 'Broker cavabı qeyri-müəyyəndir; təkrar sifariş bloklandı.')+details)
+
