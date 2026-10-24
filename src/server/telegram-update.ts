@@ -25,5 +25,26 @@ export async function processTelegramUpdate(db:PoolClient,u:TelegramUpdate,c:Non
  await db.query("INSERT INTO audit(tenant_id,actor_id,event) VALUES($1,$2,'TELEGRAM_LINKED')",[c.tenant,actor]);
  return {chat_id:c.telegramId,text:`✅ <b>VELA hesabınız bağlandı!</b>\n\n👤 İstifadəçi: <b>${String(link.rows[0].username).replace(/[&<>]/g,'')}</b>\n🔔 Xəbər və bazar baxışı bildirişlərini saytdakı Telegram bölməsindən aça bilərsiniz.\n🌐 Sayt bağlantı vəziyyətini avtomatik yeniləyəcək.\n\nℹ️ Bu bot ticarət əmri göndərmir və hesab əməliyyatlarını idarə etmir.`,parse_mode:'HTML' as const};
 }
+export async function processTelegramCommand(db:PoolClient,u:TelegramUpdate,tenant:string,user:string){
+ const m=u.message;if(!m)return null;
+ const inserted=await db.query('INSERT INTO telegram_updates(update_id) VALUES($1) ON CONFLICT DO NOTHING RETURNING update_id',[u.update_id]);if(!inserted.rowCount)return null;
+ const command=m.text.trim().split(/\s+/)[0].split('@')[0].toLowerCase();
+ if(command==='/start')return '✅ <b>VELA hesabınız artıq bağlıdır.</b>\n/status · /settings · /pause · /resume · /unlink';
+ if(command==='/status'){
+  const q=await db.query('SELECT p.enabled,p.market_outlooks,p.paused,p.markets,p.muted_until,(SELECT max(sent_at) FROM telegram_deliveries d WHERE d.tenant_id=p.tenant_id AND d.user_id=p.user_id) AS last_sent FROM telegram_preferences p WHERE p.tenant_id=$1 AND p.user_id=$2',[tenant,user]);const p=q.rows[0];
+  if(!p)return 'VELA ayarları tapılmadı. Saytdan Telegram-ı yenidən bağlayın.';
+  return `📡 <b>VELA vəziyyəti</b>\nBildirişlər: ${p.enabled&&!p.paused?'aktiv':'dayandırılıb'}\nAI baxışları: ${p.market_outlooks?'aktiv':'söndürülüb'}\nAktivlər: ${p.markets.join(', ')||'seçilməyib'}\nSon göndəriş: ${p.last_sent?new Date(p.last_sent).toLocaleString('az-AZ',{timeZone:'Asia/Baku'}):'hələ yoxdur'} (Bakı)`;
+ }
+ if(command==='/settings')return '⚙️ <b>VELA bildiriş ayarları</b>\nAktivləri, AI baxışlarını və saatlıq limiti saytın Telegram bölməsindən dəyişə bilərsiniz.';
+ if(command==='/pause'||command==='/resume'){
+  await db.query('UPDATE telegram_preferences SET paused=$3,updated_at=now() WHERE tenant_id=$1 AND user_id=$2',[tenant,user,command==='/pause']);
+  return command==='/pause'?'⏸ Bildirişlər dayandırıldı. /resume ilə davam edə bilərsiniz.':'▶️ Bildirişlər davam edir. Sayt seçimləriniz qüvvədədir.';
+ }
+ if(command==='/unlink'){
+  await db.query('DELETE FROM telegram_links WHERE tenant_id=$1 AND user_id=$2',[tenant,user]);await db.query('UPDATE telegram_preferences SET enabled=false,paused=true,updated_at=now() WHERE tenant_id=$1 AND user_id=$2',[tenant,user]);
+  return '🔒 Telegram bağlantısı kəsildi. Yenidən qoşulmaq üçün saytdan yeni link yaradın.';
+ }
+ return 'Komandalar: /status, /settings, /pause, /resume, /unlink';
+}
 
 
