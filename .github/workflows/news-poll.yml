@@ -1,5 +1,8 @@
 name: VELA news polling
 on:
+  push:
+    paths:
+      - .github/workflows/news-poll.yml
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
