@@ -83,7 +83,7 @@ def run(stop_event=None, on_snapshot=None, demo_pilot=None):
                     except Exception:
                         pass
             if demo_pilot is not None:
-                payload['connectorVersion']='1.4.0'
+                payload['connectorVersion']='1.4.2'
                 payload['demoProtocol']=2
                 payload['demoPilot']=dict(demo_pilot.status)
                 if time.monotonic()>=next_history:
@@ -182,3 +182,4 @@ if __name__ == "__main__":
         from connector_core import classify_error
         write_runtime_status(control_dir,'ERROR',{'reason':classify_error(error)})
         raise
+

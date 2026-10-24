@@ -304,8 +304,11 @@ class DemoPilot:
         else:return self.report('DATA',diagnostic=base+': brokerin dəstəklədiyi əmr icra növü müəyyən edilmədi.')
         request=dict(action=api.TRADE_ACTION_DEAL,symbol=symbol,volume=volume,type=kind,price=price,sl=sl,tp=tp,
                      deviation=10,magic=MAGIC,comment='VELA-DEMO-'+s['sessionId'][:8],type_time=api.ORDER_TIME_GTC,type_filling=filling)
+        planned_risk=api.order_calc_profit(kind,symbol,volume,price,sl)
+        if planned_risk is None or not math.isfinite(planned_risk) or planned_risk>=0:return self.report('DATA',diagnostic=base+': SL üzrə təxmini zərər hesablanmadı; Telegram təklifi göndərilmədi.')
+        if abs(planned_risk)>a.equity*.0025*.9:return self.report('DATA',diagnostic=base+': SL üzrə təxmini risk 0,25% təhlükəsizlik limitini keçir.')
         if self.approval_client is None:return self.report('APPROVAL',diagnostic='Telegram təsdiq kanalı hazır deyil; sifariş göndərilməyib.')
-        approval=self.approval_client.prepare(s,packet,request)
+        approval=self.approval_client.prepare(s,packet,request,abs(planned_risk))
         if approval.get('state')=='COUNT_PENDING':return self.report('LIMIT_WAIT',diagnostic='Seçilmiş əməliyyat sayı limiti dolub.')
         if approval.get('state')=='COOLDOWN':return self.report('COOLDOWN',diagnostic='Server tezlik limitinə görə yeni girişə fasilə verir.')
         if approval.get('state')=='UNRESOLVED':return self.report('UNKNOWN',diagnostic='Əvvəlki əmrin nəticəsi dəqiqləşməyib; təkrar giriş təhlükəsizlik üçün bloklandı.')

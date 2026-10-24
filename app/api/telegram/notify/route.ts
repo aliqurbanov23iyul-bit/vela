@@ -17,6 +17,7 @@ export async function POST(req:Request){try{
   const sent=await db.query("SELECT 1 FROM audit WHERE actor_id=$1 AND event='TELEGRAM_PROPOSAL_SENT' AND data->>'approvalId'=$2 LIMIT 1",[s.user_id,a.id]);
   return {id:a.id,chat:link.telegram_id,account:p.account_id,sent:!!sent.rowCount,text:proposalMessage(p.label,p.payload,p.expires_at)};
  });
- if(!item.sent){await telegram('sendMessage',{chat_id:item.chat,text:item.text,reply_markup:approvalKeyboard(s.tenant_id,item.id)});await tenantTx(s.tenant_id,db=>db.query("INSERT INTO audit(tenant_id,actor_id,account_id,event,data) VALUES($1,$2,$3,'TELEGRAM_PROPOSAL_SENT',$4)",[s.tenant_id,s.user_id,item.account,JSON.stringify({approvalId:item.id})]));}
+ if(!item.sent){await telegram('sendMessage',{chat_id:item.chat,text:item.text,parse_mode:'HTML',reply_markup:approvalKeyboard(s.tenant_id,item.id)});await tenantTx(s.tenant_id,db=>db.query("INSERT INTO audit(tenant_id,actor_id,account_id,event,data) VALUES($1,$2,$3,'TELEGRAM_PROPOSAL_SENT',$4)",[s.tenant_id,s.user_id,item.account,JSON.stringify({approvalId:item.id})]));}
  return NextResponse.json({ok:true});
  }catch(e){const reason=e instanceof Error?e.message:'';return NextResponse.json({error:reason==='LINK'?'Əvvəl Telegram hesabını bağlayın.':reason==='PROPOSAL'||reason==='EXPIRED'?'Təklif artıq mövcud deyil və ya vaxtı bitib.':'Mesaj göndərilmədi. Bağlantını yoxlayıb yenidən cəhd edin.'},{status:400});}}
+

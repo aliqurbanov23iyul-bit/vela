@@ -18,7 +18,7 @@ CONFIG_PATH = ROOT / 'connection.dat'
 INSTALLED = ROOT / 'VELA.exe'
 FROZEN = bool(getattr(sys, 'frozen', False))
 NO_WINDOW = 0x08000000
-VERSION = '1.4.0'
+VERSION = '1.4.2'
 
 
 def record_status(event, error=None):
@@ -61,6 +61,23 @@ def set_startup(enabled):
                 winreg.DeleteValue(key, 'VELAConnector')
             except FileNotFoundError:
                 pass
+
+
+def acquire_agent_mutex():
+    """Keep the same single-agent lock used by main.py while this UI owns MT5."""
+    if os.name != 'nt':
+        return None
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+    kernel.CreateMutexW.restype = ctypes.c_void_p
+    handle = kernel.CreateMutexW(None, False, 'Local\\VELAConnectorAgentV1')
+    if not handle:
+        raise OSError('AGENT_INSTANCE_CHECK_FAILED')
+    if ctypes.get_last_error() == 183:
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel.CloseHandle(handle)
+        return None
+    return handle
 
 
 class InstallError(Exception):
@@ -221,8 +238,14 @@ class Desktop:
         if self.process is not None:
             messagebox.showinfo('VELA', 'Faylı dəyişmək üçün əvvəl VELA-nı dayandır.', parent=self.root)
             return
+        self.root.attributes('-topmost', True)
         path = filedialog.askopenfilename(parent=self.root, title='VELA bağlantı faylını seç', initialdir=str(Path.home() / 'Downloads'), filetypes=[('VELA bağlantısı', '*.json')])
+        self.root.attributes('-topmost', False)
         if not path:
+            self.status.stopped('Başlatmaq üçün VELA bağlantı JSON faylını seç.')
+            self.message.set(self.status.message)
+            self.root.lift()
+            messagebox.showinfo('Bağlantı faylı lazımdır', 'Saytdakı Bağlantılar bölməsindən VELA JSON faylını endir və bu pəncərədə seç. Fayl seçilmədən agent başlaya bilməz.', parent=self.root)
             return
         try:
             config = read_config(path)
@@ -248,9 +271,16 @@ class Desktop:
             if not self.account:
                 return
         if os.name == 'nt':
-            self.agent_mutex = acquire_agent_mutex()
+            try:
+                self.agent_mutex = acquire_agent_mutex()
+            except Exception as error:
+                record_status('ERROR', error)
+                self.status.stopped('VELA Windows agent kilidini aça bilmədi. Proqramı bağlayıb yenidən aç.')
+                self.message.set(self.status.message)
+                return
             if self.agent_mutex is None:
                 self.status.stopped('VELA agenti artıq işləyir. Əvvəl həmin proqramdan dayandır.')
+                self.message.set(self.status.message)
                 return
         # One worker owns all MT5 reads. Stop cooperatively; never terminate MT5.
         self.generation += 1
@@ -263,7 +293,22 @@ class Desktop:
         self.process = threading.Thread(target=self.read_worker, args=(dict(self.account), gen, self.stop_event), daemon=False)
         self.connect_button.configure(state='disabled')
         self.stop_button.configure(state='normal')
-        self.process.start()
+        try:
+            self.process.start()
+        except Exception as error:
+            record_status('ERROR', error)
+            self.process = None
+            self.stopping = False
+            if self.agent_mutex:
+                try:
+                    ctypes.windll.kernel32.CloseHandle(self.agent_mutex)
+                except Exception:
+                    pass
+                self.agent_mutex = None
+            self.status.stopped('VELA agent iş parçası başlaya bilmədi. Proqramı bağlayıb yenidən aç; xəta qeydi diaqnostikada saxlanıb.')
+            self.message.set(self.status.message)
+            self.connect_button.configure(state='normal')
+            self.stop_button.configure(state='disabled')
 
     def read_worker(self, config, generation, stop_event):
         try:
@@ -521,3 +566,4 @@ def entry():
 
 if __name__ == '__main__':
     raise SystemExit(entry())
+

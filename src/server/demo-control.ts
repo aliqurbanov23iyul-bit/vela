@@ -5,7 +5,7 @@ import {digest,equal} from './security';
 import {demoObservation} from './demo-observation';
 export const agentIdentity=z.object({tenantId:z.string().uuid(),accountId:z.string().uuid(),login:z.string(),server:z.string()});
 export const brokerRequest=z.object({action:z.literal(1),symbol:z.string().min(1).max(64),volume:z.number().finite().positive().max(100),type:z.union([z.literal(0),z.literal(1)]),price:z.number().finite().positive(),sl:z.number().finite().positive(),tp:z.number().finite().positive(),deviation:z.literal(10),magic:z.literal(2601023),comment:z.string().regex(/^VELA-DEMO-[a-f0-9-]{8}$/),type_time:z.literal(0),type_filling:z.union([z.literal(0),z.literal(1),z.literal(2)])}).strict().refine(r=>r.type===0?r.sl<r.price&&r.price<r.tp:r.tp<r.price&&r.price<r.sl);
-export const demoCandidate=agentIdentity.extend({operation:z.literal('prepare'),sessionId:z.string().uuid(),symbol:z.enum(['EURUSD','XAUUSD']),barAt:z.string().datetime(),request:brokerRequest}).strict();
+export const demoCandidate=agentIdentity.extend({operation:z.literal('prepare'),sessionId:z.string().uuid(),symbol:z.enum(['EURUSD','XAUUSD']),barAt:z.string().datetime(),plannedRiskMoney:z.number().finite().positive().max(1000000000).optional(),request:brokerRequest}).strict();
 export const demoClaim=agentIdentity.extend({operation:z.literal('claim'),sessionId:z.string().uuid(),candidateId:z.string().uuid()}).strict();
 export const demoDeal=z.object({ticket:z.string().regex(/^\d{1,24}$/),positionId:z.string().regex(/^\d{1,24}$/),symbol:z.string().min(1).max(64),side:z.enum(['BUY','SELL']),entry:z.enum(['IN','OUT','INOUT','OUT_BY']),volume:z.number().finite().positive(),price:z.number().finite().positive(),profit:z.number().finite(),commission:z.number().finite(),swap:z.number().finite(),fee:z.number().finite(),at:z.string().datetime(),magic:z.number().int().nonnegative(),botPosition:z.literal(true),sessionId:z.string().uuid().nullable().optional()}).strict();
 type Agent=z.infer<typeof agentIdentity>;
@@ -77,7 +77,11 @@ export async function prepareDemo(db:PoolClient,b:z.infer<typeof demoCandidate>,
   if(Date.parse(b.barAt)%300000!==0)throw Error('STALE_SIGNAL');
   const id=randomUUID(),approval=run.mode==='TELEGRAM'?randomUUID():null;
   const expires=new Date(Math.min(run.expiresAt?Date.parse(run.expiresAt):Infinity,Date.parse(observation.expiresAt),Date.now()+120000));
-  const payload={demo:true,symbol:b.symbol,side:b.request.type===0?'BUY':'SELL',entry:b.request.price,stop:b.request.sl,take:b.request.tp,volume:b.request.volume,riskPercent:0.25};
+  const snapshot=a.snapshot as {equity?:number;currency?:string}|null;
+  const equity=Number(snapshot?.equity);
+  if(b.plannedRiskMoney!==undefined&&(!Number.isFinite(equity)||equity<=0||b.plannedRiskMoney>equity*.0025))throw Error('STALE_SIGNAL');
+  const riskPercent=b.plannedRiskMoney!==undefined?b.plannedRiskMoney/equity*100:0.25;
+  const payload={demo:true,symbol:b.symbol,side:b.request.type===0?'BUY':'SELL',entry:b.request.price,stop:b.request.sl,take:b.request.tp,volume:b.request.volume,riskMoney:b.plannedRiskMoney,riskPercent,riskCapPercent:0.25,currency:snapshot?.currency};
   await db.query('INSERT INTO proposals(id,tenant_id,account_id,version,payload,expires_at) VALUES($1,$2,$3,$4,$5,$6)',[id,b.tenantId,b.accountId,a.permission_version,JSON.stringify(payload),expires]);
   if(approval)await db.query('INSERT INTO approvals(id,tenant_id,user_id,account_id,proposal_id,proposal_version,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[approval,b.tenantId,a.owner_id,b.accountId,id,a.permission_version,digest(randomUUID()),expires]);
   row=(await db.query('INSERT INTO demo_candidates(id,tenant_id,account_id,session_id,mode,symbol,bar_at,request,approval_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *',[id,b.tenantId,b.accountId,b.sessionId,run.mode,b.symbol,b.barAt,JSON.stringify(b.request),approval,expires])).rows[0];
@@ -89,7 +93,7 @@ export async function prepareDemo(db:PoolClient,b:z.infer<typeof demoCandidate>,
  if(state==='PENDING'){
   const link=(await db.query('SELECT telegram_id FROM telegram_links WHERE user_id=$1 AND telegram_id IS NOT NULL',[a.owner_id])).rows[0];if(!link)throw Error('TELEGRAM');
   const lease=await db.query("UPDATE demo_candidates SET notification_lease=now()+interval '30 seconds',delivery_attempts=delivery_attempts+1 WHERE id=$1 AND notified_at IS NULL AND (notification_lease IS NULL OR notification_lease<now()) AND delivery_attempts<3 RETURNING id",[row.id]);
-  if(lease.rowCount)notification={id:row.id,approvalId:row.approval_id,chat:link.telegram_id,label:a.label,request:row.request,expiresAt:row.expires_at};
+  if(lease.rowCount){const snapshot=a.snapshot as {equity?:number;currency?:string}|null;const riskMoney=b.plannedRiskMoney;const equity=Number(snapshot?.equity);notification={id:row.id,approvalId:row.approval_id,chat:link.telegram_id,label:a.label,request:row.request,riskMoney,riskPercent:riskMoney!==undefined&&Number.isFinite(equity)&&equity>0?riskMoney/equity*100:null,currency:snapshot?.currency,expiresAt:row.expires_at};}
  }
  return {state,id:row.id,request:row.request,expiresAt:new Date(row.expires_at).toISOString(),notification};
 }
@@ -124,3 +128,4 @@ export async function haltDemo(db:PoolClient,b:z.infer<typeof demoHalt>,raw:stri
  else await db.query('UPDATE demo_control SET enabled=false,stop_reason=$1 WHERE account_id=$2 AND enabled=true',[b.reason,b.accountId]);
  return {ok:true};
 }
+
