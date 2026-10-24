@@ -1,7 +1,6 @@
 import {NextResponse} from 'next/server';
-import {identity} from '../../../../src/server/auth';
+import {identity,sameOrigin} from '../../../../src/server/auth';
 import {tenantTx} from '../../../../src/server/db';
-import {sameOrigin} from '../../../../src/server/security';
 import {getNewsContext} from '../../../../src/server/public-news';
 import {summarizeNews} from '../../../../src/server/news-summary';
 
@@ -29,3 +28,4 @@ export async function POST(req:Request){
   return NextResponse.json({error:message},{status,headers:{'Cache-Control':'no-store'}});
  }
 }
+
